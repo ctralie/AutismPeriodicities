@@ -4,12 +4,21 @@ Purpose: To parse the autism periodicity data at http://cbslab.org/smm-dataset/
 """
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.io as sio
 import time
 import datetime
 from lxml import etree as ET
 from mpl_toolkits.mplot3d import Axes3D
+import sys
+sys.path.append("SlidingWindowVideoTDA")
+from VideoTools import *
+from FundamentalFreq import *
+from TDA import *
+from sklearn.decomposition import PCA
+
 
 ACCEL_TYPES = ["Trunk", "Left-wrist", "Right-wrist"]
+ACCEL_NUMS = ["01", "08", "11"]
 
 def getTime(s):
     """
@@ -79,6 +88,24 @@ def loadAnnotations(filename):
         anno.append({"start":start, "stop":stop, "label":label})
     return anno
 
+def getNormalAnnotations(anno, minTime = 5000, length=3500):
+    """
+    Return annotations for regions where no sterotypical motions
+    are labeled
+    """
+    nanno = []
+    for i in range(len(anno)-1):
+        start = anno[i]['stop']
+        stop = anno[i+1]['start']
+        dT = stop - start
+        if dT > minTime:
+            #Find a random time interval of length minTime
+            diff = dT - length
+            start = start + 0.5*diff
+            stop = start + length
+            nanno.append({"start":start, "stop":stop, "label":"Normal"})
+    return nanno
+
 def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
     """
     Plot the annotations in time, labeling with colors
@@ -90,7 +117,7 @@ def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
     labels = {}
     legends = {}
     plt.hold(True)
-    colors = ['r', 'g', 'b', 'm']
+    colors = ['r', 'g', 'b', 'm', 'c']
     idx = 0
     minTime = np.inf
     for a in anno:
@@ -119,14 +146,67 @@ def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
         plt.title(l + ", %g Seconds"%(t2-t1))
     if doLegend:
         plt.legend(handles = [legends[l] for l in legends])
+
+
+def getMaxPersistenceBlock(XParam, hopSize, winSize, dim, estimateFreq = False, derivWin = -1):
+    XP = np.array(XParam)
+    #Do time derivative
+    if derivWin > -1:
+        XP = getTimeDerivative(XP, derivWin)[0]
+    NBlocks = 1
+    if XP.shape[0] > winSize:
+        NBlocks = int(np.ceil((XP.shape[0]-winSize)/float(hopSize)))
+    pca = PCA(n_components = 1)
+    maxP = 0.0 #Maximum persistence
+    maxI = np.array([[0, 0]])
+    maxidx = 0
+    for i in range(NBlocks):
+        X = XP[i*hopSize:i*hopSize+winSize, :]
+        
+        xpca = pca.fit_transform(X)
+        Tau = 1
+        dT = 1
+        #Do fundamental frequency estimation
+        if estimateFreq:
+            (maxT, corr) = estimateFundamentalFreq(xpca.flatten(), False)
+            #Choose sliding window parameters 
+            Tau = maxT/float(dim)
+        
+        #Get sliding window
+        if X.shape[0] <= dim:
+            break
+        XS = getSlidingWindowVideo(X, dim, Tau, dT)
+        
+        #Mean-center and normalize sliding window
+        XS = XS - np.mean(XS, 1)[:, None]
+        XS = XS/np.sqrt(np.sum(XS**2, 1))[:, None]
+        sio.savemat("XS.mat", {"XS":XS})
+        
+        try:
+            PDs2 = doRipsFiltration(XS, 1, coeff=2)
+            I1 = PDs2[1]
+            if I1.size > 0:
+                val = np.max(I1[:, 1] - I1[:, 0])
+                if val > maxP:
+                    maxP = val
+                    maxI = I1
+                    maxidx = i*hopSize
+        except Exception:
+            print "EXCEPTION"
+    return (maxP/np.sqrt(3), maxI, maxidx)
     
+
 if __name__ == '__main__':
     foldername = "neudata/data/Study1/URI-001-01-18-08"
     annofilename = "Annotator1Stereotypy.annotation.xml"
     anno = loadAnnotations("%s/%s"%(foldername, annofilename))
     ftemplate = foldername + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
-    nums = ["01", "08", "11"]
-    Xs = [loadAccelerometerData(ftemplate%(nums[i], ACCEL_TYPES[i])) for i in range(len(ACCEL_TYPES))]
+    anno = anno + getNormalAnnotations(anno[1::])[1::]
+    #anno = getNormalAnnotations(anno[1::])[1::]
+    
+    Xs = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(len(ACCEL_TYPES))]
+
+    dim = 30
 
     plt.figure(figsize=(15, 5*len(ACCEL_TYPES)))
     FigH = 10*len(ACCEL_TYPES)+1
@@ -138,25 +218,36 @@ if __name__ == '__main__':
         plt.axis('off')
         
         for k in range(len(ACCEL_TYPES)):
+            print ACCEL_TYPES[k]
             x = getAccelerometerRange(Xs[k], a)
-            ax = plt.subplot2grid((FigH, 3), (1+k*10, 0), projection = '3d', rowspan=8, colspan=1)
-
-            c = plt.get_cmap('Spectral')
-            C = c(np.array(np.round(np.linspace(0, 255, x.shape[0])), dtype=np.int32))
-            C = C[:, 0:3]
-            ax.scatter(x[:, 1], x[:, 2], x[:, 3], c = C)
-            ax.set_title(ACCEL_TYPES[k])
             
+            #Step 1: Plot ordinary SSM
+            ax = plt.subplot2grid((FigH, 3), (1+k*10, 0), rowspan=8, colspan=1)
             dT = (a['stop'] - a['start'])/1000.0
             D = getCSM(x[:, 1::], x[:, 1::])
-            plt.subplot2grid((FigH, 3), (1+k*10, 1), rowspan = 8, colspan = 1)
             plt.imshow(D, cmap = 'afmhot', interpolation = 'nearest', extent = (0, dT, 0, dT))
+            plt.title(ACCEL_TYPES[k])
             
+            #Step 2: Do delay embedding and plot delay SSM
+            plt.subplot2grid((FigH, 3), (1+k*10, 1), rowspan = 8, colspan = 1)
+            XS = getSlidingWindowVideo(x[:, 1::], dim, 1, 1)
+            #Mean-center and normalize sliding window
+            XS = XS - np.mean(XS, 1)[:, None]
+            XS = XS/np.sqrt(np.sum(XS**2, 1))[:, None]
+            D = getCSM(XS, XS)
+            plt.imshow(D, cmap = 'afmhot', interpolation = 'nearest')
+            
+            #Step 3: Plot persistence diagram
             plt.subplot2grid((FigH, 3), (1+k*10, 2), rowspan = 8, colspan = 1)
-            mag = np.sqrt(np.sum(x[:, 1::]**2, 1))
-            plt.plot((x[:, 0] - x[0, 0])/1000.0, mag)
-        
+            (maxP, maxI, maxidx) = getMaxPersistenceBlock(x[:, 1::], 20, 150, dim)
+            plotDGM(maxI, color = np.array([1.0, 0.0, 0.2]), label = 'H1', sz = 50, axcolor = np.array([0.8]*3))
+            plt.title("maxP = %.3g, maxidx = %i"%(maxP, maxidx))
         
         plt.savefig("%i.png"%i, bbox_inches='tight')
-    
+
+if __name__ == '__main__2':
+    XS = sio.loadmat("XS.mat")['XS']
+    print XS.shape
+    PDs = doRipsFiltration(XS, 1, coeff=2)
+    print PDs
     
