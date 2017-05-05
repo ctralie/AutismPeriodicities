@@ -58,7 +58,7 @@ def getAccelerometerRange(X, a):
 #    print "t1 = %i, i1 = %g, val = %g"%(t1, i1, X[i1, 0])
 #    print "t2 = %i, i2 = %g"%(t2, i2)
 #    print t1 - X[i1, 0]
-#    
+#
 #    plt.clf()
 #    plt.plot(X[:, 0])
 #    plt.hold(True)
@@ -88,23 +88,35 @@ def loadAnnotations(filename):
         anno.append({"start":start, "stop":stop, "label":label})
     return anno
 
-def getNormalAnnotations(anno, minTime = 5000, length=3500):
+def getNormalAnnotations(anno, minTime = 4000):
     """
     Return annotations for regions where no sterotypical motions
     are labeled
     """
     nanno = []
+    idx = np.argsort([a['start'] for a in anno])
+    anno = [anno[i] for i in idx]
     for i in range(len(anno)-1):
         start = anno[i]['stop']
         stop = anno[i+1]['start']
-        dT = stop - start
-        if dT > minTime:
-            #Find a random time interval of length minTime
-            diff = dT - length
-            start = start + 0.5*diff
-            stop = start + length
-            nanno.append({"start":start, "stop":stop, "label":"Normal"})
+        if stop - start < minTime:
+            continue
+        nanno.append({"start":start, "stop":stop, "label":"Normal"})
     return nanno
+
+def expandAnnotations(anno, time = 2000, hop = 130):
+    """
+    Split each annotation into smaller overlapping sub-blocks
+    """
+    newanno = []
+    for a in anno:
+        start = a['start']
+        stop = a['stop']
+        t1 = start
+        while t1 + time <= stop:
+            newanno.append({"start":t1, "stop":(t1 + time), "label":a["label"]})
+            t1 += hop
+    return newanno
 
 def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
     """
@@ -131,7 +143,7 @@ def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
         if relative:
             t1 = (t1-minTime)/1000.0
             t2 = (t2-minTime)/1000.0
-        h = plt.plot([t1, t2], [0, 0], colors[labels[l]], linewidth=4, label = l)[0]
+        h = plt.plot([t1, t2], [0, 0], colors[labels[l]], linewidth=1, label = l)[0]
         legends[l] = h
         idx += 1
     if thisa:
@@ -144,69 +156,72 @@ def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
         plt.plot([t1, t1], [-1, 1], colors[labels[l]])
         plt.plot([t2, t2], [-1, 1], colors[labels[l]])
         plt.title(l + ", %g Seconds"%(t2-t1))
+        plt.xlim([t1 - 5, t2 + 5])
     if doLegend:
         plt.legend(handles = [legends[l] for l in legends])
 
 
-def getMaxPersistenceBlock(XParam, hopSize, winSize, dim, estimateFreq = False, derivWin = -1):
-    XP = np.array(XParam)
+def getPersistencesBlock(XP, dim, estimateFreq = False, derivWin = -1):
+    X = np.array(XP)
     #Do time derivative
     if derivWin > -1:
-        XP = getTimeDerivative(XP, derivWin)[0]
-    NBlocks = 1
-    if XP.shape[0] > winSize:
-        NBlocks = int(np.ceil((XP.shape[0]-winSize)/float(hopSize)))
+        X = getTimeDerivative(X, derivWin)[0]
     pca = PCA(n_components = 1)
-    maxP = 0.0 #Maximum persistence
-    maxI = np.array([[0, 0]])
-    maxidx = 0
-    for i in range(NBlocks):
-        X = XP[i*hopSize:i*hopSize+winSize, :]
-        
+
+    I = np.array([[0, 0]])
+    Pers = 0.0
+
+    Tau = 1
+    dT = 1
+    #Do fundamental frequency estimation
+    if estimateFreq:
         xpca = pca.fit_transform(X)
-        Tau = 1
-        dT = 1
-        #Do fundamental frequency estimation
-        if estimateFreq:
-            (maxT, corr) = estimateFundamentalFreq(xpca.flatten(), False)
-            #Choose sliding window parameters 
-            Tau = maxT/float(dim)
-        
-        #Get sliding window
-        if X.shape[0] <= dim:
-            break
-        XS = getSlidingWindowVideo(X, dim, Tau, dT)
-        
-        #Mean-center and normalize sliding window
-        XS = XS - np.mean(XS, 1)[:, None]
-        XS = XS/np.sqrt(np.sum(XS**2, 1))[:, None]
-        sio.savemat("XS.mat", {"XS":XS})
-        
-        try:
-            PDs2 = doRipsFiltration(XS, 1, coeff=2)
-            I1 = PDs2[1]
-            if I1.size > 0:
-                val = np.max(I1[:, 1] - I1[:, 0])
-                if val > maxP:
-                    maxP = val
-                    maxI = I1
-                    maxidx = i*hopSize
-        except Exception:
-            print "EXCEPTION"
-    return (maxP/np.sqrt(3), maxI, maxidx)
-    
+        (maxT, corr) = estimateFundamentalFreq(xpca.flatten(), False)
+        #Choose sliding window parameters
+        Tau = maxT/float(dim)
+
+    #Get sliding window
+    if X.shape[0] <= dim:
+        return (Pers, I)
+    XS = getSlidingWindowVideo(X, dim, Tau, dT)
+
+    #Mean-center and normalize sliding window
+    XS = XS - np.mean(XS, 1)[:, None]
+    XS = XS/np.sqrt(np.sum(XS**2, 1))[:, None]
+    sio.savemat("XS.mat", {"XS":XS})
+
+    try:
+        PDs2 = doRipsFiltration(XS, 1, coeff=2)
+        I = PDs2[1]
+        if I.size > 0:
+            Pers = np.max(I[:, 1] - I[:, 0])
+    except Exception:
+        print "EXCEPTION"
+    return (Pers, I)
+
 
 if __name__ == '__main__':
     foldername = "neudata/data/Study1/URI-001-01-18-08"
     annofilename = "Annotator1Stereotypy.annotation.xml"
     anno = loadAnnotations("%s/%s"%(foldername, annofilename))
     ftemplate = foldername + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
-    anno = anno + getNormalAnnotations(anno[1::])[1::]
-    #anno = getNormalAnnotations(anno[1::])[1::]
-    
+    anno = anno[1::]
+    #anno = anno + getNormalAnnotations(anno)
+    nanno = getNormalAnnotations(anno)
+    allanno = anno + nanno
+
+    idx = np.argsort([a['start'] for a in allanno])
+    allanno = [allanno[i] for i in idx]
+    X = np.array([[a['start']-allanno[0]['start'], a['stop']-allanno[0]['start']] for a in allanno])
+    sio.savemat("Intervals.mat", {"X":X})
+
+    anno = expandAnnotations(allanno)
+    print "There are %i annotations"%len(anno)
+
     Xs = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(len(ACCEL_TYPES))]
 
     dim = 30
+    derivWin = -1
 
     plt.figure(figsize=(15, 5*len(ACCEL_TYPES)))
     FigH = 10*len(ACCEL_TYPES)+1
@@ -214,35 +229,38 @@ if __name__ == '__main__':
         plt.clf()
         a = anno[i]
         plt.subplot2grid((FigH, 3), (0, 0), rowspan=1, colspan=3)
-        visualizeLabels(anno, a, doLegend = False)
+        visualizeLabels(allanno, a, doLegend = False)
         plt.axis('off')
-        
+
         for k in range(len(ACCEL_TYPES)):
             print ACCEL_TYPES[k]
             x = getAccelerometerRange(Xs[k], a)
-            
+
             #Step 1: Plot ordinary SSM
             ax = plt.subplot2grid((FigH, 3), (1+k*10, 0), rowspan=8, colspan=1)
             dT = (a['stop'] - a['start'])/1000.0
             D = getCSM(x[:, 1::], x[:, 1::])
             plt.imshow(D, cmap = 'afmhot', interpolation = 'nearest', extent = (0, dT, 0, dT))
             plt.title(ACCEL_TYPES[k])
-            
+
             #Step 2: Do delay embedding and plot delay SSM
             plt.subplot2grid((FigH, 3), (1+k*10, 1), rowspan = 8, colspan = 1)
-            XS = getSlidingWindowVideo(x[:, 1::], dim, 1, 1)
+            X = np.array(x[:, 1::])
+            if derivWin > -1:
+                X = getTimeDerivative(X, derivWin)[0]
+            XS = getSlidingWindowVideo(X, dim, 1, 1)
             #Mean-center and normalize sliding window
             XS = XS - np.mean(XS, 1)[:, None]
             XS = XS/np.sqrt(np.sum(XS**2, 1))[:, None]
             D = getCSM(XS, XS)
             plt.imshow(D, cmap = 'afmhot', interpolation = 'nearest')
-            
+
             #Step 3: Plot persistence diagram
             plt.subplot2grid((FigH, 3), (1+k*10, 2), rowspan = 8, colspan = 1)
-            (maxP, maxI, maxidx) = getMaxPersistenceBlock(x[:, 1::], 20, 150, dim)
-            plotDGM(maxI, color = np.array([1.0, 0.0, 0.2]), label = 'H1', sz = 50, axcolor = np.array([0.8]*3))
-            plt.title("maxP = %.3g, maxidx = %i"%(maxP, maxidx))
-        
+            (P, I) = getPersistencesBlock(x[:, 1::], dim, derivWin = derivWin)
+            plotDGM(I, color = np.array([1.0, 0.0, 0.2]), label = 'H1', sz = 50, axcolor = np.array([0.8]*3))
+            plt.title("Pers = %.3g"%P)
+
         plt.savefig("%i.png"%i, bbox_inches='tight')
 
 if __name__ == '__main__2':
@@ -250,4 +268,3 @@ if __name__ == '__main__2':
     print XS.shape
     PDs = doRipsFiltration(XS, 1, coeff=2)
     print PDs
-    
