@@ -1,4 +1,5 @@
 from AutismData import *
+from GeometricScoring import *
 import glob
 import matplotlib.pyplot as plt
 

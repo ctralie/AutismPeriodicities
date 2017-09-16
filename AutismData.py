@@ -10,11 +10,9 @@ import datetime
 from lxml import etree as ET
 from mpl_toolkits.mplot3d import Axes3D
 import sys
-sys.path.append("SlidingWindowVideoTDA")
-from VideoTools import *
-from FundamentalFreq import *
-from TDA import *
-from sklearn.decomposition import PCA
+from SlidingWindowVideoTDA.VideoTools import *
+from SlidingWindowVideoTDA.TDA import *
+from GeometricScoring import *
 
 
 ACCEL_TYPES = ["Trunk", "Left-wrist", "Right-wrist"]
@@ -27,18 +25,6 @@ def getTime(s):
     t = time.mktime(datetime.datetime.strptime(s[0:-4], "%Y-%m-%d %H:%M:%S").timetuple())
     t = t*1000 + float(s[-3:]) - 5*3600000  #Hack: Somehow the data is ahead by 5 hours
     return t
-
-def getCSM(X, Y):
-    """
-    Return the Euclidean cross-similarity matrix between the M points
-    in the Mxd matrix X and the N points in the Nxd matrix Y.
-    :param X: An Mxd matrix holding the coordinates of M points
-    :param Y: An Nxd matrix holding the coordinates of N points
-    :return D: An MxN Euclidean cross-similarity matrix
-    """
-    C = np.sum(X**2, 1)[:, None] + np.sum(Y**2, 1)[None, :] - 2*X.dot(Y.T)
-    C[C < 0] = 0
-    return np.sqrt(C)
 
 def loadAccelerometerData(filename):
     X = np.loadtxt(filename, delimiter=",")
@@ -159,45 +145,6 @@ def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
         plt.xlim([t1 - 5, t2 + 5])
     if doLegend:
         plt.legend(handles = [legends[l] for l in legends])
-
-
-def getPersistencesBlock(XP, dim, estimateFreq = False, derivWin = -1):
-    X = np.array(XP)
-    #Do time derivative
-    if derivWin > -1:
-        X = getTimeDerivative(X, derivWin)[0]
-    pca = PCA(n_components = 1)
-
-    I = np.array([[0, 0]])
-    Pers = 0.0
-
-    Tau = 1
-    dT = 1
-    #Do fundamental frequency estimation
-    if estimateFreq:
-        xpca = pca.fit_transform(X)
-        (maxT, corr) = estimateFundamentalFreq(xpca.flatten(), False)
-        #Choose sliding window parameters
-        Tau = maxT/float(dim)
-
-    #Get sliding window
-    if X.shape[0] <= dim:
-        return (Pers, I)
-    XS = getSlidingWindowVideo(X, dim, Tau, dT)
-
-    #Mean-center and normalize sliding window
-    XS = XS - np.mean(XS, 1)[:, None]
-    XS = XS/np.sqrt(np.sum(XS**2, 1))[:, None]
-    sio.savemat("XS.mat", {"XS":XS})
-
-    try:
-        PDs2 = doRipsFiltration(XS, 1, coeff=2)
-        I = PDs2[1]
-        if I.size > 0:
-            Pers = np.max(I[:, 1] - I[:, 0])
-    except Exception:
-        print "EXCEPTION"
-    return (Pers, I)
 
 
 if __name__ == '__main__':
