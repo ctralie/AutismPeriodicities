@@ -99,6 +99,11 @@ def getRQADiags(R):
         x += np.diagonal(R, i).tolist() + [0]
     return getContinuousRuns(x)
 
+def zeroDenom(x):
+    if x == 0:
+        return 1.0
+    return x
+
 def getRQAStats(R, dmin, vmin):
     """
     Compute different recurrence quantification statistics
@@ -123,27 +128,27 @@ def getRQAStats(R, dmin, vmin):
     RR = np.sum(R == 1)/float(R.size)
 
     #Determinism
-    DET = SumDiags/float(np.sum(R[I > J]))
+    DET = SumDiags/zeroDenom(float(np.sum(R[I > J])))
 
     #Laminarity
-    LAM = SumVerts/np.sum(np.array([c*Verts[c] for c in Verts]))
+    denom = np.sum(np.array([c*Verts[c] for c in Verts]))
+    LAM = SumVerts/zeroDenom(denom)
 
     #Ratio
     denom = (np.sum(np.array([Diags[c] for c in Diags])))**2
-    RATIO = float(R.size)*SumDiags/denom
+    RATIO = float(R.size)*SumDiags/zeroDenom(denom)
 
     #Average diag length
     NDiags = np.sum(np.array([Diags[c] for c in Diags if c >= dmin]))
-    NDiags = float(NDiags)
+    NDiags = zeroDenom(float(NDiags))
     L = SumDiags / NDiags
 
     #Trapping Time (Average vertical length)
     NVerts = np.sum(np.array([Verts[c] for c in Verts if c >= vmin]))
-    NVerts = float(NVerts)
+    NVerts = zeroDenom(float(NVerts))
     TT = SumVerts / NVerts
 
     #Entropy
-    NTotal = float(np.sum([]))
     ps = np.array([Diags[c]/NDiags for c in Diags if c >= dmin])
     ENTR = -np.sum(ps*np.log(ps))
 
@@ -160,8 +165,8 @@ if __name__ == '__main__':
     X = np.cos(4*t)
     D = np.abs(X[:, None] - X[None, :])
     R = CSMToBinaryMutual(D, 0.2)
-    tic = time.time()
-    print("Elapsed Time Runs: %g"%(time.time() - tic))
-    print getRQAStats(R, 5, 5)
+    stats = getRQAStats(R, 5, 5)
+    for s in stats:
+        print("%s: %.3g"%(s, stats[s]))
     plt.imshow(R)
     plt.show()
