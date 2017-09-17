@@ -1,9 +1,38 @@
 import numpy as np
 import scipy.io as sio
+from scipy import sparse
+import time
 from sklearn.decomposition import PCA
 from SlidingWindowVideoTDA.FundamentalFreq import *
 from SlidingWindowVideoTDA.TDA import *
 from SlidingWindowVideoTDA.VideoTools import *
+
+def getMeanShift(X, theta = np.pi/16):
+    N = X.shape[0]
+    eps = np.cos(theta)
+    XS = X/np.sqrt(np.sum(X**2, 1))[:, None]
+    D = XS.dot(XS.T)
+    J, I = np.meshgrid(np.arange(N), np.arange(N))
+    J = J[D >= eps]
+    I = I[D >= eps]
+    V = np.ones(I.size)
+    D = sparse.coo_matrix((V, (I, J)), shape=(N, N)).tocsr()
+    XMean = np.zeros(X.shape)
+    for i in range(N):
+        idx = D[i, :].nonzero()[1]
+        XMean[i, :] = np.mean(X[idx, :], 0)
+    return XMean
+
+def getMeanShiftKNN(X, K):
+    N = X.shape[0]
+    D = np.sum(X**2, 1)[:, None]
+    D = D + D.T - 2*X.dot(X.T)
+    allidx = np.argsort(D, 1)
+    XMean = np.zeros(X.shape)
+    for i in range(N):
+        idx = allidx[i, 0:K]
+        XMean[i, :] = np.mean(X[idx, :], 0)
+    return XMean
 
 def getCSM(X, Y):
     """
@@ -33,9 +62,6 @@ def getSlidingWindow(XP, dim, estimateFreq = False, derivWin = -1):
         X = getTimeDerivative(X, derivWin)[0]
     pca = PCA(n_components = 1)
 
-    I = np.array([[0, 0]])
-    Pers = 0.0
-
     Tau = 1
     dT = 1
     #Do fundamental frequency estimation
@@ -47,7 +73,7 @@ def getSlidingWindow(XP, dim, estimateFreq = False, derivWin = -1):
 
     #Get sliding window
     if X.shape[0] <= dim:
-        return (Pers, I)
+        return np.array([[0, 0]])
     XS = getSlidingWindowVideo(X, dim, Tau, dT)
 
     #Mean-center and normalize sliding window
@@ -60,14 +86,18 @@ def getPersistencesBlock(XP, dim, estimateFreq = False, derivWin = -1):
     Return the Sw1Pers score of this block
     """
     XS = getSlidingWindow(XP, dim, estimateFreq, derivWin)
+    #XS = getMeanShift(XS)
+    D = getCSM(XS, XS)
+    Pers = 0
+    I = np.array([[0, 0]])
     try:
-        PDs2 = doRipsFiltration(XS, 1, coeff=41)
+        PDs2 = doRipsFiltrationDM(D, 1, coeff=41)
         I = PDs2[1]
         if I.size > 0:
             Pers = np.max(I[:, 1] - I[:, 0])
     except Exception:
         print "EXCEPTION"
-    return (Pers, I)
+    return {'D':D, 'P':Pers, 'I':I}
 
 def getD2ChiSqr(XP, dim, estimateFreq = False, derivWin = -1):
     """

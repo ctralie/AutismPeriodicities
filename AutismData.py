@@ -146,8 +146,24 @@ def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
     if doLegend:
         plt.legend(handles = [legends[l] for l in legends])
 
+def smoothData(x, gaussSigma = 3):
+    """
+    Given data in an array, apply a sliding window mean
+    :param x: An Nxk array of k data streams
+    :param gaussSigma: Sigma of sliding window Gaussian
+    :return xret: An Mxk array of k smoothed data streams, M < N
+    """
+    gaussSigma = int(np.round(gaussSigma*3))
+    g = np.exp(-(np.arange(-gaussSigma, gaussSigma+1, dtype=np.float64))**2/(2*gaussSigma**2))
+    xret = []
+    for k in range(x.shape[1]):
+        xsmooth = np.convolve(x[:, k], g, 'valid')
+        xsmooth = xsmooth.flatten()
+        xret.append(xsmooth.tolist())
+    return np.array(xret).T
 
 if __name__ == '__main__':
+    NA = len(ACCEL_TYPES)
     foldername = "neudata/data/Study1/URI-001-01-18-08"
     annofilename = "Annotator1Stereotypy.annotation.xml"
     anno = loadAnnotations("%s/%s"%(foldername, annofilename))
@@ -162,51 +178,46 @@ if __name__ == '__main__':
     X = np.array([[a['start']-allanno[0]['start'], a['stop']-allanno[0]['start']] for a in allanno])
     sio.savemat("Intervals.mat", {"X":X})
 
-    anno = expandAnnotations(allanno)
+    anno = expandAnnotations(allanno, time = 3000)
     print "There are %i annotations"%len(anno)
 
-    Xs = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(len(ACCEL_TYPES))]
+    Xs = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(NA)]
 
     dim = 30
-    derivWin = -1
+    derivWin = 10
 
-    plt.figure(figsize=(15, 5*len(ACCEL_TYPES)))
-    FigH = 10*len(ACCEL_TYPES)+1
+    plt.figure(figsize=(20, 5*NA))
+    FigH = 10*NA+1
     for i in range(1, len(anno)):
         plt.clf()
         a = anno[i]
-        plt.subplot2grid((FigH, 3), (0, 0), rowspan=1, colspan=3)
-        visualizeLabels(allanno, a, doLegend = False)
-        plt.axis('off')
-
-        for k in range(len(ACCEL_TYPES)):
+        for k in range(NA):
             print ACCEL_TYPES[k]
-            x = getAccelerometerRange(Xs[k], a)
+            x = getAccelerometerRange(Xs[k], a)[:, 1::]
+            x = smoothData(x)
+            print("x.shape = ", x.shape)
+
+            plt.subplot(NA, 4, k*4+1)
+            plt.plot(x)
+            plt.title(a['label'])
 
             #Step 1: Plot ordinary SSM
-            ax = plt.subplot2grid((FigH, 3), (1+k*10, 0), rowspan=8, colspan=1)
+            plt.subplot(NA, 4, k*4+2)
             dT = (a['stop'] - a['start'])/1000.0
-            D = getCSM(x[:, 1::], x[:, 1::])
+            D = getCSM(x, x)
             plt.imshow(D, cmap = 'afmhot', interpolation = 'nearest', extent = (0, dT, 0, dT))
             plt.title(ACCEL_TYPES[k])
 
-            #Step 2: Do delay embedding and plot delay SSM
-            plt.subplot2grid((FigH, 3), (1+k*10, 1), rowspan = 8, colspan = 1)
-            X = np.array(x[:, 1::])
-            if derivWin > -1:
-                X = getTimeDerivative(X, derivWin)[0]
-            XS = getSlidingWindowVideo(X, dim, 1, 1)
-            #Mean-center and normalize sliding window
-            XS = XS - np.mean(XS, 1)[:, None]
-            XS = XS/np.sqrt(np.sum(XS**2, 1))[:, None]
-            D = getCSM(XS, XS)
-            plt.imshow(D, cmap = 'afmhot', interpolation = 'nearest')
-
-            #Step 3: Plot persistence diagram
-            plt.subplot2grid((FigH, 3), (1+k*10, 2), rowspan = 8, colspan = 1)
-            (P, I) = getPersistencesBlock(x[:, 1::], dim, derivWin = derivWin)
+            #Step 2: Plot persistence diagram
+            plt.subplot(NA, 4, k*4+3)
+            res = getPersistencesBlock(x, dim, derivWin = derivWin)
+            [I, P, D] = [res['I'], res['P'], res['D']]
             plotDGM(I, color = np.array([1.0, 0.0, 0.2]), label = 'H1', sz = 50, axcolor = np.array([0.8]*3))
             plt.title("Pers = %.3g"%P)
+
+            #Step 3: Plot SSM
+            plt.subplot(NA, 4, k*4+4)
+            plt.imshow(D, cmap = 'afmhot', interpolation = 'nearest')
 
         plt.savefig("%i.png"%i, bbox_inches='tight')
 

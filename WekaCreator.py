@@ -2,11 +2,15 @@ from AutismData import *
 from GeometricScoring import *
 import glob
 import matplotlib.pyplot as plt
+from RQA import *
 
 def writeWekaHeader(fout, studies):
+    rqa = getRQAStats(np.random.randn(10, 10) > 0, 5, 5).keys()
     fout.write("@RELATION Persistences\n")
     for i in range(len(ACCEL_TYPES)):
-        fout.write("@ATTRIBUTE %s real\n"%ACCEL_TYPES[i])
+        for r in rqa:
+            fout.write("@ATTRIBUTE %s%s real\n"%(ACCEL_TYPES[i], r))
+        fout.write("@ATTRIBUTE %sPers real\n"%ACCEL_TYPES[i])
     labels = ['Flap-Rock', 'Rock', 'Flap', 'Normal']
     fout.write("@ATTRIBUTE class {")
     labels = [l for l in labels]
@@ -28,6 +32,9 @@ def writeWekaHeader(fout, studies):
 if __name__ == '__main__':
     studiesDir = "neudata/data/Study1/"
     dim = 30
+    Kappa = 0.2
+    dmin = 5
+    vmin = 5
     derivWin = -1
     folders = glob.glob(studiesDir+"*")
     studies = [f.split("/")[-1] for f in folders]
@@ -38,7 +45,7 @@ if __name__ == '__main__':
         foldername = folders[j]
         thisfout = open("%s/Persistences.arff"%foldername, "w")
         writeWekaHeader(thisfout, [])
-        print "Doing ", foldername
+        print("Doing %s"%foldername)
         annofilename = "Annotator1Stereotypy.annotation.xml"
         anno = loadAnnotations("%s/%s"%(foldername, annofilename))
         nanno = getNormalAnnotations(anno[1::])
@@ -46,9 +53,9 @@ if __name__ == '__main__':
         nanno = expandAnnotations(nanno)
         #Keep the annotations balanced by subsapling the negative regions
         if len(nanno) > len(anno) / 3:
-            print "Subsampling %i negative annotations"%len(nanno)
+            print("Subsampling %i negative annotations"%len(nanno))
             nanno = [nanno[k] for k in np.random.permutation(len(nanno))[0:len(anno)/3]]
-        print "There are %i annotations and %i negative annotations"%(len(anno), len(nanno))
+        print("There are %i annotations and %i negative annotations"%(len(anno), len(nanno)))
         anno = anno + nanno
         ftemplate = foldername + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
         plt.clf()
@@ -56,12 +63,20 @@ if __name__ == '__main__':
         plt.savefig("%s/annotations.svg"%foldername, bbox_inches='tight')
         Xs = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(len(ACCEL_TYPES))]
         for i in range(1, len(anno)):
+            print("Doing Annotation %i of %i"%(i, len(anno)))
             a = anno[i]
             if not a['label'] in ['Flap-Rock', 'Rock', 'Flap', 'Normal']:
                 continue
             for k in range(len(ACCEL_TYPES)):
-                x = getAccelerometerRange(Xs[k], a)
-                (Pers, I) = getPersistencesBlock(x[:, 1::], dim, derivWin = derivWin)
+                x = getAccelerometerRange(Xs[k], a)[:, 1::]
+                x = smoothData(x)
+                res = getPersistencesBlock(x, dim, derivWin = derivWin)
+                B = CSMToBinaryMutual(getCSM(x, x), Kappa)
+                rqas = getRQAStats(B, dmin, vmin)
+                Pers = res['P']
+                for rqstr in rqas.keys():
+                    fout.write("%g,"%rqas[rqstr])
+                    thisfout.write("%g,"%rqas[rqstr])
                 fout.write("%g,"%Pers)
                 thisfout.write("%g,"%Pers)
             fout.write("%s,"%a['label'])

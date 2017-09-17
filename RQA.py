@@ -153,10 +153,14 @@ def getRQAStats(R, dmin, vmin):
     ENTR = -np.sum(ps*np.log(ps))
 
     #Longest diag line
-    Lmax = np.max(np.array([c for c in Diags]))
+    Lmax = 0
+    if len(Diags) > 0:
+        Lmax = np.max(np.array([c for c in Diags]))
 
     #Longest vert line
-    Vmax = np.max(np.array([c for c in Verts]))
+    Vmax = 0
+    if len(Verts) > 0:
+        Vmax = np.max(np.array([c for c in Verts]))
 
     return {'RR':RR, 'DET':DET, 'LAM':LAM, 'RATIO':RATIO, 'L':L, 'TT':TT, 'ENTR':ENTR, 'Lmax':Lmax, 'Vmax':Vmax}
 
