@@ -54,7 +54,7 @@ if __name__ == '__main__':
         #Keep the annotations balanced by subsapling the negative regions
         if len(nanno) > len(anno) / 3:
             print("Subsampling %i negative annotations"%len(nanno))
-            nanno = [nanno[k] for k in np.random.permutation(len(nanno))[0:len(anno)/3]]
+            nanno = [nanno[k] for k in np.random.permutation(len(nanno))[0:int(len(anno)/3)]]
         print("There are %i annotations and %i negative annotations"%(len(anno), len(nanno)))
         anno = anno + nanno
         ftemplate = foldername + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
@@ -69,7 +69,7 @@ if __name__ == '__main__':
                 continue
             for k in range(len(ACCEL_TYPES)):
                 x = getAccelerometerRange(Xs[k], a)[:, 1::]
-                x = smoothData(x)
+                x = smoothDataMedian(x, 3)
                 res = getPersistencesBlock(x, dim, derivWin = derivWin)
                 B = CSMToBinaryMutual(getCSM(x, x), Kappa)
                 rqas = getRQAStats(B, dmin, vmin)

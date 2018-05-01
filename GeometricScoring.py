@@ -2,10 +2,8 @@ import numpy as np
 import scipy.io as sio
 from scipy import sparse
 import time
-from sklearn.decomposition import PCA
-from SlidingWindowVideoTDA.FundamentalFreq import *
-from SlidingWindowVideoTDA.TDA import *
-from SlidingWindowVideoTDA.VideoTools import *
+from ripser import Rips
+from VideoTools import *
 
 def getMeanShift(X, theta = np.pi/16):
     N = X.shape[0]
@@ -46,13 +44,11 @@ def getCSM(X, Y):
     C[C < 0] = 0
     return np.sqrt(C)
 
-def getSlidingWindow(XP, dim, estimateFreq = False, derivWin = -1):
+def getSlidingWindow(XP, dim, derivWin = -1, Tau = 1, dT = 1):
     """
     Return a sliding window video
     :param XP: An N x d matrix of N frames each with d pixels
     :param dim: The dimension of the sliding window
-    :param estimateFreq: Whether or not to estimate the fundamental frequency
-    or to just use dim as the window size with Tau = 1
     :param derivWin: Whether or not to do a time derivative of each pixel
     :returns: XS: The sliding window video
     """
@@ -60,16 +56,6 @@ def getSlidingWindow(XP, dim, estimateFreq = False, derivWin = -1):
     #Do time derivative
     if derivWin > -1:
         X = getTimeDerivative(X, derivWin)[0]
-    pca = PCA(n_components = 1)
-
-    Tau = 1
-    dT = 1
-    #Do fundamental frequency estimation
-    if estimateFreq:
-        xpca = pca.fit_transform(X)
-        (maxT, corr) = estimateFundamentalFreq(xpca.flatten(), False)
-        #Choose sliding window parameters
-        Tau = maxT/float(dim)
 
     #Get sliding window
     if X.shape[0] <= dim:
@@ -77,7 +63,8 @@ def getSlidingWindow(XP, dim, estimateFreq = False, derivWin = -1):
     XS = getSlidingWindowVideo(X, dim, Tau, dT)
 
     #Mean-center and normalize sliding window
-    XS = XS - np.mean(XS, 1)[:, None]
+    XS = XS - np.mean(XS, 1)[:, None] #Point Centering
+    #XS = XS - np.mean(XS, 0)[None, :] #Z Normalizing
     XS = XS/np.sqrt(np.sum(XS**2, 1))[:, None]
     return XS
 
@@ -85,18 +72,19 @@ def getPersistencesBlock(XP, dim, estimateFreq = False, derivWin = -1):
     """
     Return the Sw1Pers score of this block
     """
-    XS = getSlidingWindow(XP, dim, estimateFreq, derivWin)
+    XS = getSlidingWindow(XP, dim, derivWin)
     #XS = getMeanShift(XS)
     D = getCSM(XS, XS)
     Pers = 0
     I = np.array([[0, 0]])
+    rips = Rips(coeff=41, verbose=False)
     try:
-        PDs2 = doRipsFiltrationDM(D, 1, coeff=41)
+        PDs2 = rips.fit_transform(D)
         I = PDs2[1]
         if I.size > 0:
             Pers = np.max(I[:, 1] - I[:, 0])
     except Exception:
-        print "EXCEPTION"
+        print("EXCEPTION")
     return {'D':D, 'P':Pers, 'I':I}
 
 def getD2ChiSqr(XP, dim, estimateFreq = False, derivWin = -1):

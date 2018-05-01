@@ -10,13 +10,15 @@ import datetime
 from lxml import etree as ET
 from mpl_toolkits.mplot3d import Axes3D
 import sys
-from SlidingWindowVideoTDA.VideoTools import *
-from SlidingWindowVideoTDA.TDA import *
+from VideoTools import *
+from ripser import Rips
 from GeometricScoring import *
 
 
 ACCEL_TYPES = ["Trunk", "Left-wrist", "Right-wrist"]
 ACCEL_NUMS = ["01", "08", "11"]
+#ACCEL_TYPES = ["Right-Wrist", "Left-Wrist", "Torso"]
+#ACCEL_NUMS = ["00", "01", "02"]
 
 def getTime(s):
     """
@@ -41,9 +43,9 @@ def getAccelerometerRange(X, a):
     i1 = np.arange(X.shape[0])[np.argmin(np.abs(X[:, 0] - t1))]
     i2 = np.arange(X.shape[0])[np.argmin(np.abs(X[:, 0] - t2))]
 
-#    print "t1 = %i, i1 = %g, val = %g"%(t1, i1, X[i1, 0])
-#    print "t2 = %i, i2 = %g"%(t2, i2)
-#    print t1 - X[i1, 0]
+#    print("t1 = %i, i1 = %g, val = %g"%(t1, i1, X[i1, 0]))
+#    print("t2 = %i, i2 = %g"%(t2, i2))
+#    print(t1 - X[i1, 0])
 #
 #    plt.clf()
 #    plt.plot(X[:, 0])
@@ -146,9 +148,10 @@ def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
     if doLegend:
         plt.legend(handles = [legends[l] for l in legends])
 
-def smoothData(x, gaussSigma = 3):
+def smoothDataMean(x, gaussSigma = 3):
     """
-    Given data in an array, apply a sliding window mean
+    Given data in a 2D array, apply a sliding window mean to
+        each column
     :param x: An Nxk array of k data streams
     :param gaussSigma: Sigma of sliding window Gaussian
     :return xret: An Mxk array of k smoothed data streams, M < N
@@ -162,8 +165,23 @@ def smoothData(x, gaussSigma = 3):
         xret.append(xsmooth.tolist())
     return np.array(xret).T
 
+def smoothDataMedian(x, Win = 3):
+    """
+    Given data in a 2D array, apply a sliding window median to
+        each column
+    :param x: An Nxk array of k data streams
+    :param Win: Width of window
+    :return xret: An Mxk array of k smoothed data streams, M <= N
+    """
+    from scipy.signal import medfilt
+    xret = []
+    for k in range(x.shape[1]):
+        xret.append(medfilt(x[:, k], kernel_size=Win).tolist())
+    return np.array(xret).T
+
 if __name__ == '__main__':
     NA = len(ACCEL_TYPES)
+    studyname = "URI-001-01-18-08"
     foldername = "neudata/data/Study1/URI-001-01-18-08"
     annofilename = "Annotator1Stereotypy.annotation.xml"
     anno = loadAnnotations("%s/%s"%(foldername, annofilename))
@@ -179,7 +197,7 @@ if __name__ == '__main__':
     sio.savemat("Intervals.mat", {"X":X})
 
     anno = expandAnnotations(allanno, time = 3000)
-    print "There are %i annotations"%len(anno)
+    print("There are %i annotations"%len(anno))
 
     Xs = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(NA)]
 
@@ -188,13 +206,14 @@ if __name__ == '__main__':
 
     plt.figure(figsize=(20, 5*NA))
     FigH = 10*NA+1
+    rips = Rips()
     for i in range(1, len(anno)):
         plt.clf()
         a = anno[i]
         for k in range(NA):
-            print ACCEL_TYPES[k]
+            print(ACCEL_TYPES[k])
             x = getAccelerometerRange(Xs[k], a)[:, 1::]
-            x = smoothData(x)
+            x = smoothDataMedian(x, 5)
             print("x.shape = ", x.shape)
 
             plt.subplot(NA, 4, k*4+1)
@@ -212,7 +231,7 @@ if __name__ == '__main__':
             plt.subplot(NA, 4, k*4+3)
             res = getPersistencesBlock(x, dim, derivWin = derivWin)
             [I, P, D] = [res['I'], res['P'], res['D']]
-            plotDGM(I, color = np.array([1.0, 0.0, 0.2]), label = 'H1', sz = 50, axcolor = np.array([0.8]*3))
+            rips.plot(diagrams=[I], labels=['H1'], size=50, show=False)
             plt.title("Pers = %.3g"%P)
 
             #Step 3: Plot SSM
@@ -220,9 +239,3 @@ if __name__ == '__main__':
             plt.imshow(D, cmap = 'afmhot', interpolation = 'nearest')
 
         plt.savefig("%i.png"%i, bbox_inches='tight')
-
-if __name__ == '__main__2':
-    XS = sio.loadmat("XS.mat")['XS']
-    print XS.shape
-    PDs = doRipsFiltration(XS, 1, coeff=2)
-    print PDs
