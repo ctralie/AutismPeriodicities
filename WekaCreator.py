@@ -69,7 +69,7 @@ if __name__ == '__main__':
                 continue
             for k in range(len(ACCEL_TYPES)):
                 x = getAccelerometerRange(Xs[k], a)[:, 1::]
-                x = smoothDataMedian(x, 3)
+                #x = smoothDataMedian(x, 3)
                 res = getPersistencesBlock(x, dim, derivWin = derivWin)
                 B = CSMToBinaryMutual(getCSM(x, x), Kappa)
                 rqas = getRQAStats(B, dmin, vmin)
