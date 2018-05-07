@@ -3,6 +3,7 @@ from GeometricScoring import *
 import glob
 import matplotlib.pyplot as plt
 from RQA import *
+from ripser import Rips
 
 def writeWekaHeader(fout, studies):
     rqa = getRQAStats(np.random.randn(10, 10) > 0, 5, 5).keys()
@@ -51,7 +52,7 @@ if __name__ == '__main__':
         nanno = getNormalAnnotations(anno[1::])
         anno = expandAnnotations(anno[1::])
         nanno = expandAnnotations(nanno)
-        #Keep the annotations balanced by subsapling the negative regions
+        #Keep the annotations balanced by subsampling the negative regions
         if len(nanno) > len(anno) / 3:
             print("Subsampling %i negative annotations"%len(nanno))
             nanno = [nanno[k] for k in np.random.permutation(len(nanno))[0:int(len(anno)/3)]]

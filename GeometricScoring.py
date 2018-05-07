@@ -44,6 +44,23 @@ def getCSM(X, Y):
     C[C < 0] = 0
     return np.sqrt(C)
 
+def doRipsFiltrationDMGUDHI(D, maxHomDim, coeff = 2, doPlot = False):
+    import gudhi
+    rips = gudhi.RipsComplex(distance_matrix=D,max_edge_length=np.inf)
+    simplex_tree = rips.create_simplex_tree(max_dimension=maxHomDim+1)
+    diag = simplex_tree.persistence(homology_coeff_field=coeff, min_persistence=0)
+    if doPlot:
+        pplot = gudhi.plot_persistence_diagram(diag)
+        pplot.show()
+    Is = []
+    for i in range(maxHomDim+1):
+        Is.append([])
+    for (i, (b, d)) in diag:
+        Is[i].append([b, d])
+    for i in range(len(Is)):
+        Is[i] = np.array(Is[i])
+    return Is
+
 def getSlidingWindow(XP, dim, derivWin = -1, Tau = 1, dT = 1):
     """
     Return a sliding window video
@@ -63,26 +80,34 @@ def getSlidingWindow(XP, dim, derivWin = -1, Tau = 1, dT = 1):
     XS = getSlidingWindowVideo(X, dim, Tau, dT)
 
     #Mean-center and normalize sliding window
-    XS = XS - np.mean(XS, 1)[:, None] #Point Centering
-    #XS = XS - np.mean(XS, 0)[None, :] #Z Normalizing
+    #XS = XS - np.mean(XS, 1)[:, None] #Point Centering
+    XS = XS - np.mean(XS, 0)[None, :] #Z Normalizing
     XS = XS/np.sqrt(np.sum(XS**2, 1))[:, None]
     return XS
 
-def getPersistencesBlock(XP, dim, estimateFreq = False, derivWin = -1):
+def getPersistencesBlock(XP, dim, estimateFreq = False, derivWin = -1, cosineDist = False, birthcutoff = 0.7):
     """
     Return the Sw1Pers score of this block
     """
     XS = getSlidingWindow(XP, dim, derivWin)
     #XS = getMeanShift(XS)
-    D = getCSM(XS, XS)
+    if cosineDist:
+        D = XS.dot(XS.T)
+        D[D > 1] = 1
+        D[D < -1] = -1
+        D = np.arccos(D)/np.pi
+    else:
+        D = getCSM(XS, XS)
     Pers = 0
     I = np.array([[0, 0]])
-    rips = Rips(coeff=41, verbose=False)
     try:
-        PDs2 = rips.fit_transform(D)
-        I = PDs2[1]
+        #PDs = rips.fit_transform(D, distance_matrix=True)
+        PDs = doRipsFiltrationDMGUDHI(D, 1, coeff=41)
+        I = PDs[1]
         if I.size > 0:
-            Pers = np.max(I[:, 1] - I[:, 0])
+            ISub = np.array(I) 
+            ISub = ISub[ISub[:, 0] <= birthcutoff, :]
+            Pers = np.max(ISub[:, 1] - ISub[:, 0])
     except Exception:
         print("EXCEPTION")
     return {'D':D, 'P':Pers, 'I':I}

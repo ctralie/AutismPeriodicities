@@ -6,6 +6,7 @@ import numpy as np
 import scipy.misc
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import scipy.io as sio
 from itertools import cycle
 import json
 import os
@@ -99,7 +100,6 @@ def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
     """
     labels = {}
     legends = {}
-    plt.hold(True)
     colors = ['r', 'g', 'b', 'm', 'c']
     idx = 0
     minTime = np.inf
@@ -200,9 +200,12 @@ class Pose(object):
     POSE_SKELETON = [[10, 9], [13, 12], [9, 8], [12, 11], [8, 1], [11, 1], \
                             [2, 1], [5, 1], [4, 3], [3, 2], [7, 6], [6, 5], \
                             [1, 0], [0, 14], [0, 15], [14, 16], [15, 17]]
+    POSE_HAND = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],\
+                [0, 9], [9, 10], [10, 11], [11, 12], [0, 13], [13, 14], [14, 15],\
+                [15, 16], [0, 17], [17, 18], [18, 19], [19, 20]]
     def __init__(self, fileprefix):
         """
-        Load open pose keypoints and image
+        Load open pose keypoints and image, and initialize timestamp
         """
         self.fileprefix = fileprefix
         self.I = scipy.misc.imread("%s.jpg"%fileprefix)
@@ -211,28 +214,39 @@ class Pose(object):
         people = res['people']
         self.people = []
         for p in people:
-            k = p['pose_keypoints']
-            x = np.reshape(k, (int(len(k)/3), 3))
-            self.people.append({'pose':x})
+            pobj = {}
+            for s in ('pose_keypoints', 'hand_left_keypoints', 'hand_right_keypoints'):
+                k = p[s]
+                x = np.reshape(k, (int(len(k)/3), 3))
+                pobj[s] = x
+            self.people.append(pobj)
+        #YYYY-MM-DD HH:MM:SS.mmmm
+        s = fileprefix.split("/")[-1]
+        fields = tuple(s.split("-"))
+        self.timestamp = getTime("%s-%s-%s %s:%s:%s:%s"%fields)
     
-    def render(self):
+    def render(self, showLandmarks = True):
         plt.imshow(self.I)
-        mpl.style.use('default')
-        colors = cycle(['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
-        for p, color in zip(self.people, colors):
-            #First plot keypoints
-            keypts = p['pose']
-            toplot = keypts[keypts[:, 2] > 0, :]
-            plt.scatter(toplot[:, 0], toplot[:, 1], c=color)
-            #Now plot skeleton
-            for [i, j] in Pose.POSE_SKELETON:
-                if keypts[i, 2] > 0 and keypts[j, 2] > 0:
-                    plt.plot(keypts[[i, j], 0], keypts[[i, j], 1], c=color)
+        if showLandmarks:
+            mpl.style.use('default')
+            colors = cycle(['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
+            for p, color in zip(self.people, colors):
+                #First plot keypoints
+                for keypts, skeleton, sz in zip( (p['pose_keypoints'], p['hand_left_keypoints'], \
+                                                                    p['hand_right_keypoints']),\
+                                          (Pose.POSE_SKELETON, Pose.POSE_HAND, Pose.POSE_HAND),\
+                                          (20, 3, 3) ):
+                    toplot = keypts[keypts[:, 2] > 0, :]
+                    plt.scatter(toplot[:, 0], toplot[:, 1], sz, c=color)
+                    #Now plot skeleton
+                    for [i, j] in skeleton:
+                        if keypts[i, 2] > 0 and keypts[j, 2] > 0:
+                            plt.plot(keypts[[i, j], 0], keypts[[i, j], 1], c=color)
         plt.axis('off')
         plt.xlim([0, self.I.shape[1]])
         plt.ylim([self.I.shape[0], 0])
-    
-def getVideo(studydir, renderpath = ""):
+
+def getVideo(studydir, renderpath = "", framerange = (0, np.inf)):
     """
     Given the path to the annotations/XML folder, 
     figure out the path to video frames and load in the video
@@ -243,6 +257,9 @@ def getVideo(studydir, renderpath = ""):
         Path to the directory of the study for this video
     renderpath: string, default ""
         Path to which to save video of keypoints
+    framerange: tuple, default (0, inf)
+        Range of frames to load in the video.  If not specified, all
+        frames are loaded
     """
     study = studydir.split("/")[-1]
     folder = ""
@@ -267,6 +284,8 @@ def getVideo(studydir, renderpath = ""):
                 allprefixes.append(fileprefix)
     allprefixes = sorted(allprefixes)
     for i, fileprefix in enumerate(allprefixes):
+        if i < framerange[0] or i > framerange[1]:
+            continue
         print("Loading video frame %i of %i"%(i+1, len(allprefixes)))
         video.append(Pose(fileprefix))
         if len(renderpath) > 0:
@@ -275,10 +294,13 @@ def getVideo(studydir, renderpath = ""):
             plt.savefig("%s%i.png"%(renderpath, i))
     return video
 
+def getNearestVideoFrame(video, timestamp):
+    ts = np.array([f.timestamp for f in video])
+    idx = np.argmin(np.abs(ts-timestamp))
+    return video[idx]
 
 
-
-if __name__ == '__main__':
+if __name__ == '__main__2':
     NA = len(ACCEL_TYPES)
     studyname = "URI-001-01-18-08"
     foldername = "neudata/data/Study1/URI-001-01-18-08"
@@ -287,8 +309,9 @@ if __name__ == '__main__':
     ftemplate = foldername + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
     anno = anno[1::]
     #anno = anno + getNormalAnnotations(anno)
-    nanno = getNormalAnnotations(anno)
-    allanno = anno + nanno
+    #nanno = getNormalAnnotations(anno)
+    #allanno = anno[2::] + nanno
+    allanno = anno[3::]
 
     idx = np.argsort([a['start'] for a in allanno])
     allanno = [allanno[i] for i in idx]
@@ -303,13 +326,14 @@ if __name__ == '__main__':
     dim = 30
     derivWin = -1
 
-    fac = 0.7
+    fac = 0.5
     plt.figure(figsize=(fac*15, fac*5*NA))
     FigH = 10*NA+1
     rips = Rips()
     for i in range(1, len(anno)):
         plt.clf()
         a = anno[i]
+        print(a)
         dT = (a['stop'] - a['start'])/1000.0
         for k in range(NA):
             print(ACCEL_TYPES[k])
@@ -336,25 +360,31 @@ if __name__ == '__main__':
 
             #Step 2: Plot persistence diagram
             plt.subplot(NA, 3, k*3+3)
-            res = getPersistencesBlock(x, dim, derivWin = derivWin)
-            [I, P, D] = [res['I'], res['P'], res['D']]
+            res = getPersistencesBlock(x, dim, derivWin = derivWin, birthcutoff=np.inf)
+            [I, P, DTDA] = [res['I'], res['P'], res['D']]
             if I.size > 0:
                 rips.plot(diagrams=[I], labels=['H1'], size=50, show=False, \
                             xy_range = [0, 2, 0, 2])
-            plt.title("Sliding Window \nPersistence Diagram\nMax = %.3g"%P)
+            if k == 0:
+                plt.title("Sliding Window \nPersistence Diagram\nMax = %.3g"%P)
+            else:
+                plt.title("Max = %.3g"%P)
+
+            if i == 8 and k == 0:
+                sio.savemat("D.mat", {"D":D, "DTDA":DTDA, "dT":dT})
 
             #Step 3: Plot SSM
             """
             plt.subplot(NA, 4, k*4+4)
-            plt.imshow(D, cmap = 'afmhot', interpolation = 'nearest')
+            plt.imshow(DTDA, cmap = 'afmhot', interpolation = 'nearest')
             """
 
         plt.tight_layout()
         plt.savefig("%i.svg"%i, bbox_inches='tight')
 
-if __name__ == '__main__2':
-    video = getVideo("URI-001-01-18-08")
-    video = video[600:1200]
+if __name__ == '__main__':
+    video = getVideo("URI-001-01-18-08", framerange = (0, 1200))
+    video = video[1000:1080]
     for i, f in enumerate(video):
         plt.clf()
         f.render()
