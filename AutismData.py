@@ -18,6 +18,8 @@ from mpl_toolkits.mplot3d import Axes3D
 from VideoTools import *
 from ripser import Rips
 from GeometricScoring import *
+from scipy.spatial import ConvexHull
+import dlib
 
 
 ACCEL_TYPES = ["Trunk", "Left-wrist", "Right-wrist"]
@@ -187,14 +189,67 @@ def getAccelerometerRange(X, a):
     return X[i1:i2+1, :]
 
 
-
-
-
-
 ########################################################################
 ##           Class for dealing with OpenPose and video data           ##
 ########################################################################
 
+def getConvexMask(hull, Y, shape):
+    """
+    Return a mask that covers the region inside of the specified convex hull
+    Parameters
+    ----------
+    hull: scipy.spatial.convexHull
+        A convex hull
+    Y: ndarray (N, 2)
+        An array of 2D points that convex hull indexes into
+    shape: shape of image mask
+
+    Returns
+    -------
+    mask: ndarray (shape)
+        A mask with 1s inside the region and 0s outside
+    """
+    J, I = np.meshgrid(np.arange(shape[1]), np.arange(shape[0]))
+    J = J.flatten()
+    I = I.flatten()
+    inside = np.ones(J.size, dtype = np.uint8)
+    for a, b, c in hull.equations:
+        res = a*J + b*I + c
+        inside *= (res < 0)
+    return np.reshape(inside, (shape[0], shape[1]))
+
+def getCircleMask(hull, Y, shape):
+    """
+    Return a mask that covers an enclosing circle of the specified convex hull
+    ----------
+    hull: scipy.spatial.convexHull
+        A convex hull
+    Y: ndarray (N, 2)
+        An array of 2D points that convex hull indexes into
+    shape: shape of image mask
+
+    Returns
+    -------
+    mask: ndarray (shape)
+        A mask with 1s inside the region and 0s outside
+    """
+    J, I = np.meshgrid(np.arange(shape[1]), np.arange(shape[0]))
+    J = J.flatten()
+    I = I.flatten()
+    inside = np.ones(J.size, dtype = np.uint8)
+    idxs = set([])
+    for i, j in hull.simplices:
+        idxs.add(i)
+        idxs.add(j)
+    X = Y[np.array(list(idxs)), :]
+    muX = np.mean(X, 0)
+    RSqr = np.max(np.sum((X-muX[None, :])**2, 1))
+    inside = (I-muX[1])**2 + (J-muX[0])**2 < RSqr
+    inside = np.array(inside, dtype=np.uint8)
+    return np.reshape(inside, (shape[0], shape[1]))
+
+def shape_to_np(shape, dtype="float"):
+    return np.array([[shape.part(i).x, shape.part(i).y] for i in range(68)], dtype=dtype)
 
 class Pose(object):
     POSE_SKELETON = [[10, 9], [13, 12], [9, 8], [12, 11], [8, 1], [11, 1], \
@@ -215,7 +270,7 @@ class Pose(object):
         self.people = []
         for p in people:
             pobj = {}
-            for s in ('pose_keypoints', 'hand_left_keypoints', 'hand_right_keypoints'):
+            for s in ('pose_keypoints', 'hand_left_keypoints', 'hand_right_keypoints', 'face_keypoints'):
                 k = p[s]
                 x = np.reshape(k, (int(len(k)/3), 3))
                 pobj[s] = x
@@ -225,8 +280,9 @@ class Pose(object):
         fields = tuple(s.split("-"))
         self.timestamp = getTime("%s-%s-%s %s:%s:%s:%s"%fields)
     
-    def render(self, showLandmarks = True):
-        plt.imshow(self.I)
+    def render(self, showLandmarks = True, blurFace = True, blurlast = []):
+        I = np.array(self.I)
+        xblurs = []
         if showLandmarks:
             mpl.style.use('default')
             colors = cycle(['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
@@ -242,9 +298,40 @@ class Pose(object):
                     for [i, j] in skeleton:
                         if keypts[i, 2] > 0 and keypts[j, 2] > 0:
                             plt.plot(keypts[[i, j], 0], keypts[[i, j], 1], c=color)
+                if blurFace:
+                    x1 = p['face_keypoints'][:, 0:2]
+                    x2 = p['pose_keypoints'][[0, 14, 15, 16, 17], 0:2]
+                    x = np.concatenate((x1, x2), 0)
+                    x = x[np.sum(x, 1) > 0, :]
+                    xblurs.append(x)
+                    if x.size > 0:
+                        try:
+                            hull = ConvexHull(x)
+                            mask = getCircleMask(hull, x, I.shape)
+                            I *= (1-mask[:, :, None])
+                        except:
+                            print("Convex hull error")
+        if blurFace:
+            predictor_path = "shape_predictor_68_face_landmarks.dat"
+            detector = dlib.get_frontal_face_detector()
+            predictor = dlib.shape_predictor(predictor_path)
+            dets = detector(self.I, 1)
+            plt.title("Dlib %i detedcted"%len(dets))
+            xs = [shape_to_np(predictor(self.I, d)) for d in dets]
+            xblurs += xs
+            for x in xs + blurlast:
+                if x.size > 0:
+                    try:
+                        hull = ConvexHull(x)
+                        mask = getCircleMask(hull, x, I.shape)
+                        I *= (1-mask[:, :, None])
+                    except:
+                        print("Convex hull error")
         plt.axis('off')
-        plt.xlim([0, self.I.shape[1]])
-        plt.ylim([self.I.shape[0], 0])
+        plt.imshow(I)
+        plt.xlim([0, I.shape[1]])
+        plt.ylim([I.shape[0], 0])
+        return xblurs
 
 def getVideo(studydir, renderpath = "", framerange = (0, np.inf)):
     """
@@ -385,7 +472,10 @@ if __name__ == '__main__2':
 if __name__ == '__main__':
     video = getVideo("URI-001-01-18-08", framerange = (0, 1200))
     video = video[1000:1080]
+    blurlast = []
+    blurlastlast = []
     for i, f in enumerate(video):
         plt.clf()
-        f.render()
+        blurlastlast = blurlast
+        blurlast = f.render(blurlast=blurlast+blurlastlast)
         plt.savefig("%i.png"%i)
