@@ -2,7 +2,7 @@ import numpy as np
 import scipy.io as sio
 from scipy import sparse
 import time
-from ripser import Rips
+from ripser import ripser
 from VideoTools import *
 
 def getMeanShift(X, theta = np.pi/16):
@@ -99,17 +99,13 @@ def getPersistencesBlock(XP, dim, estimateFreq = False, derivWin = -1, cosineDis
     else:
         D = getCSM(XS, XS)
     Pers = 0
-    I = np.array([[0, 0]])
-    try:
-        #PDs = rips.fit_transform(D, distance_matrix=True)
-        PDs = doRipsFiltrationDMGUDHI(D, 1, coeff=41)
-        I = PDs[1]
-        if I.size > 0:
-            ISub = np.array(I) 
-            ISub = ISub[ISub[:, 0] <= birthcutoff, :]
+    #PDs = rips.fit_transform(D, distance_matrix=True)
+    I = ripser(D, maxdim=1, distance_matrix=True, coeff=41)['dgms'][1]
+    if I.size > 0:
+        ISub = np.array(I) 
+        ISub = ISub[ISub[:, 0] <= birthcutoff, :]
+        if ISub.size > 0:
             Pers = np.max(ISub[:, 1] - ISub[:, 0])
-    except Exception:
-        print("EXCEPTION")
     return {'D':D, 'P':Pers, 'I':I}
 
 def getD2ChiSqr(XP, dim, estimateFreq = False, derivWin = -1):

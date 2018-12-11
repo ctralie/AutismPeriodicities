@@ -2,10 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt 
 import scipy.io as sio
 from AutismData import *
-from ripser import Rips
+from ripser import ripser, plot_dgms
 
 def makeConceptVideo(annoidx = 0, showPDs = False):
-    rips = Rips(coeff=41)
     NA = len(ACCEL_TYPES)
     #studyname = "URI-001-01-18-08"
     studyname = "URI-001-01-25-08"
@@ -34,13 +33,16 @@ def makeConceptVideo(annoidx = 0, showPDs = False):
     gridsize = (3, 3)
     if showPDs:
         gridsize = (3, 4)
+    blurlast = []
+    blurlastlast = []
     for i, a in enumerate(annos):
         plt.clf()
         scores = np.zeros(NA)
         dT = (a['stop'] - a['start'])
         frame = getNearestVideoFrame(video, a['stop'])
         plt.subplot2grid(gridsize, (0, 0), rowspan=3, colspan=1)
-        frame.render(showLandmarks=False)
+        blurlastlast = blurlast
+        blurlast = frame.render(showLandmarks=False, blurlast=blurlast+blurlastlast)
         if i*hop > padding and i*hop-padding < clipLen:
             plt.title("Annotated %s Action"%a["label"])
         for k in range(NA):
@@ -60,7 +62,7 @@ def makeConceptVideo(annoidx = 0, showPDs = False):
             if showPDs:
                 plt.subplot2grid(gridsize, (k, 2))
                 if I.size > 0:
-                    rips.plot(diagrams=[I], labels=['H1'], size=50, show=False)#, \
+                    plot_dgms(diagrams=[I], labels=['H1'], size=50, show=False)#, \
                                 #xy_range = [0, 2, 0, 2])
                 plt.title("%s Persistence Dgm"%ACCEL_TYPES[k])
             scores[k] = P/np.sqrt(3)
@@ -84,6 +86,6 @@ if __name__ == '__main__':
             extra = ""
             if showPDs:
                 extra = "withPDs"
-            subprocess.call(["avconv", "-r", "20", "-i", "anno%i_%sd.png"%(i, "%"), "-r", "20", "-b", "10000k", "%i%s.avi"%(i, extra)])
+            subprocess.call(["ffmpeg", "-r", "20", "-i", "anno%i_%sd.png"%(i, "%"), "-r", "20", "-b", "10000k", "%i%s.avi"%(i, extra)])
             for f in glob.glob("*.png"):
                 os.remove(f)

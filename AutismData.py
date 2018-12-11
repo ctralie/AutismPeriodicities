@@ -22,6 +22,8 @@ from scipy.spatial import ConvexHull
 import dlib
 
 
+IMPROVE_WITH_DLIB = False
+
 ACCEL_TYPES = ["Trunk", "Left-wrist", "Right-wrist"]
 ACCEL_NUMS = ["01", "08", "11"]
 #ACCEL_TYPES = ["Right-Wrist", "Left-Wrist", "Torso"]
@@ -38,7 +40,7 @@ def getTime(s):
     Convert time from YYYY-MM-DD HH:MM:SS.mmmm into unix millisecond time
     """
     t = time.mktime(datetime.datetime.strptime(s[0:-4], "%Y-%m-%d %H:%M:%S").timetuple())
-    t = t*1000 + float(s[-3:]) - 5*3600000  #Hack: Somehow the data is ahead by 5 hours
+    t = t*1000 + float(s[-3:]) + 1*3600000  #Hack: Somehow the data is ahead by 5 hours
     return t
 
 def loadAnnotations(filename):
@@ -263,6 +265,7 @@ class Pose(object):
         Load open pose keypoints and image, and initialize timestamp
         """
         self.fileprefix = fileprefix
+        print(fileprefix)
         self.I = scipy.misc.imread("%s.jpg"%fileprefix)
         with open("%s_keypoints.json"%fileprefix) as fin:
             res = json.load(fin)
@@ -270,7 +273,7 @@ class Pose(object):
         self.people = []
         for p in people:
             pobj = {}
-            for s in ('pose_keypoints', 'hand_left_keypoints', 'hand_right_keypoints', 'face_keypoints'):
+            for s in ('pose_keypoints_2d', 'hand_left_keypoints_2d', 'hand_right_keypoints_2d', 'face_keypoints_2d'):
                 k = p[s]
                 x = np.reshape(k, (int(len(k)/3), 3))
                 pobj[s] = x
@@ -283,40 +286,40 @@ class Pose(object):
     def render(self, showLandmarks = True, blurFace = True, blurlast = []):
         I = np.array(self.I)
         xblurs = []
-        if showLandmarks:
-            mpl.style.use('default')
-            colors = cycle(['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
-            for p, color in zip(self.people, colors):
+
+        mpl.style.use('default')
+        colors = cycle(['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
+        for p, color in zip(self.people, colors):
+            if showLandmarks:
                 #First plot keypoints
-                for keypts, skeleton, sz in zip( (p['pose_keypoints'], p['hand_left_keypoints'], \
-                                                                    p['hand_right_keypoints']),\
-                                          (Pose.POSE_SKELETON, Pose.POSE_HAND, Pose.POSE_HAND),\
-                                          (20, 3, 3) ):
+                for keypts, skeleton, sz in zip( (p['pose_keypoints_2d'], p['hand_left_keypoints_2d'], \
+                                                                    p['hand_right_keypoints_2d']),\
+                                            (Pose.POSE_SKELETON, Pose.POSE_HAND, Pose.POSE_HAND),\
+                                            (20, 3, 3) ):
                     toplot = keypts[keypts[:, 2] > 0, :]
                     plt.scatter(toplot[:, 0], toplot[:, 1], sz, c=color)
                     #Now plot skeleton
                     for [i, j] in skeleton:
                         if keypts[i, 2] > 0 and keypts[j, 2] > 0:
                             plt.plot(keypts[[i, j], 0], keypts[[i, j], 1], c=color)
-                if blurFace:
-                    x1 = p['face_keypoints'][:, 0:2]
-                    x2 = p['pose_keypoints'][[0, 14, 15, 16, 17], 0:2]
-                    x = np.concatenate((x1, x2), 0)
-                    x = x[np.sum(x, 1) > 0, :]
-                    xblurs.append(x)
-                    if x.size > 0:
-                        try:
-                            hull = ConvexHull(x)
-                            mask = getCircleMask(hull, x, I.shape)
-                            I *= (1-mask[:, :, None])
-                        except:
-                            print("Convex hull error")
-        if blurFace:
+            if blurFace:
+                x1 = p['face_keypoints_2d'][:, 0:2]
+                x2 = p['pose_keypoints_2d'][[0, 14, 15, 16, 17], 0:2]
+                x = np.concatenate((x1, x2), 0)
+                x = x[np.sum(x, 1) > 0, :]
+                xblurs.append(x)
+                if x.size > 0:
+                    try:
+                        hull = ConvexHull(x)
+                        mask = getCircleMask(hull, x, I.shape)
+                        I *= (1-mask[:, :, None])
+                    except:
+                        print("Convex hull error")
+        if blurFace and IMPROVE_WITH_DLIB:
             predictor_path = "shape_predictor_68_face_landmarks.dat"
             detector = dlib.get_frontal_face_detector()
             predictor = dlib.shape_predictor(predictor_path)
             dets = detector(self.I, 1)
-            plt.title("Dlib %i detedcted"%len(dets))
             xs = [shape_to_np(predictor(self.I, d)) for d in dets]
             xblurs += xs
             for x in xs + blurlast:
@@ -333,7 +336,45 @@ class Pose(object):
         plt.ylim([I.shape[0], 0])
         return xblurs
 
-def getVideo(studydir, renderpath = "", framerange = (0, np.inf)):
+
+def updateAssociations(video, npreceding=30):
+    """
+    Given a sequence of pose objects, make sure the first skeleton is 
+    more similar with the first skeleton in some preceding number of frames
+    than other skeletons are to the first skeleton (swap if not the case)
+    Parameters
+    ----------
+    videos: array (Pose)
+        An array of sequential pose objects in a video
+    npreceding: int
+        The number of preceding frames to consider
+    
+    """
+    N = min(npreceding, len(video)-1)
+    minDists = np.inf
+    minIdx = 0
+    for i in range(len(video[-1].people)):
+        distsi = 0.0
+        x = video[-1].people[i]['pose_keypoints_2d']
+        for j in range(N):
+            y = video[-2-j].people[0]['pose_keypoints_2d']
+            idx = (np.sum(x, 1) > 0)*(np.sum(y, 1) > 0)
+            dists = np.sqrt(np.sum((x[idx, :] - y[idx, :])**2, 1))
+            distsi += np.mean(dists)
+        if distsi < minDists:
+            minDists = distsi
+            minIdx = i
+    if minIdx > 0:
+        p = video[-1].people[0]
+        video[-1].people[0] = video[-1].people[minIdx]
+        video[-1].people[minIdx] = p
+
+
+
+
+
+
+def getVideo(studydir, save_skeletons = False, blurFace = False, framerange = (0, np.inf)):
     """
     Given the path to the annotations/XML folder, 
     figure out the path to video frames and load in the video
@@ -342,8 +383,10 @@ def getVideo(studydir, renderpath = "", framerange = (0, np.inf)):
     ----------
     studydir: string
         Path to the directory of the study for this video
-    renderpath: string, default ""
-        Path to which to save video of keypoints
+    save_skeletons: boolean, default False
+        Whether to save video of keypoints/skeletons
+    blurFace: boolean, default False
+        If saving keypoints/skeletons, whether to blur the face
     framerange: tuple, default (0, inf)
         Range of frames to load in the video.  If not specified, all
         frames are loaded
@@ -362,6 +405,13 @@ def getVideo(studydir, renderpath = "", framerange = (0, np.inf)):
     if len(folder) == "":
         print("Error: No video folder found for %s"%studydir)
         return None
+    skeletondir = ""
+    blurlast = []
+    blurlastlast = []
+    if save_skeletons:
+        skeletondir = "%s/Skeletons"%folder
+        if not os.path.exists(skeletondir):
+            os.mkdir(skeletondir)
     video = []
     allprefixes = []
     for root, dirs, files in os.walk(folder):
@@ -375,10 +425,15 @@ def getVideo(studydir, renderpath = "", framerange = (0, np.inf)):
             continue
         print("Loading video frame %i of %i"%(i+1, len(allprefixes)))
         video.append(Pose(fileprefix))
-        if len(renderpath) > 0:
+        updateAssociations(video)
+        if save_skeletons:
             plt.clf()
-            video[-1].render()
-            plt.savefig("%s%i.png"%(renderpath, i))
+            if blurFace:
+                blurlastlast = blurlast
+                blurlast = video[-1].render(blurFace=True, blurlast=blurlast+blurlastlast)
+            else:
+                video[-1].render(blurFace=False)
+            plt.savefig("%s/%s.png"%(skeletondir, fileprefix.split("/")[-1]))
     return video
 
 def getNearestVideoFrame(video, timestamp):
@@ -426,7 +481,6 @@ if __name__ == '__main__2':
             print(ACCEL_TYPES[k])
             x = getAccelerometerRange(Xs[k], a)[:, 1::]
             #x = smoothDataMedian(x, 5)
-            print("x.shape = ", x.shape)
 
             plt.subplot(NA, 3, k*3+1)
             plt.plot(np.linspace(0, dT, len(x)), x)
@@ -470,12 +524,5 @@ if __name__ == '__main__2':
         plt.savefig("%i.svg"%i, bbox_inches='tight')
 
 if __name__ == '__main__':
-    video = getVideo("URI-001-01-18-08", framerange = (0, 1200))
-    video = video[1000:1080]
-    blurlast = []
-    blurlastlast = []
-    for i, f in enumerate(video):
-        plt.clf()
-        blurlastlast = blurlast
-        blurlast = f.render(blurlast=blurlast+blurlastlast)
-        plt.savefig("%i.png"%i)
+    # 640
+    video = getVideo("URI-001-01-18-08", save_skeletons = True, blurFace = False, framerange = (600, 1500))
