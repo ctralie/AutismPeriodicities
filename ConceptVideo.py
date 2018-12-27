@@ -14,7 +14,7 @@ def makeConceptVideo(annoidx = 0, showPDs = False):
     ftemplate = foldername + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
     annos = annos[1::]
     Xs = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(NA)]
-    video = getVideo(studyname)
+    video = PoseVideo(studyname)
     a = annos[annoidx]
     clipLen = a['stop'] - a['start']
     print("Clip is %.3g seconds long:"%(clipLen/1000.0))
@@ -39,7 +39,7 @@ def makeConceptVideo(annoidx = 0, showPDs = False):
         plt.clf()
         scores = np.zeros(NA)
         dT = (a['stop'] - a['start'])
-        frame = getNearestVideoFrame(video, a['stop'])
+        frame = video.getNearestVideoFrame(a['stop'])
         plt.subplot2grid(gridsize, (0, 0), rowspan=3, colspan=1)
         blurlastlast = blurlast
         blurlast = frame.render(showLandmarks=False, blurlast=blurlast+blurlastlast)

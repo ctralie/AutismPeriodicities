@@ -16,7 +16,7 @@ import datetime
 from lxml import etree as ET
 from mpl_toolkits.mplot3d import Axes3D
 from VideoTools import *
-from ripser import Rips
+from ripser import Rips, plot_dgms
 from GeometricScoring import *
 from scipy.spatial import ConvexHull
 import dlib
@@ -266,11 +266,18 @@ class Pose(object):
         """
         self.fileprefix = fileprefix
         print(fileprefix)
+        #YYYY-MM-DD HH:MM:SS.mmmm
+        s = fileprefix.split("/")[-1]
+        fields = tuple(s.split("-"))
+        self.timestamp = getTime("%s-%s-%s %s:%s:%s:%s"%fields)
         self.I = scipy.misc.imread("%s.jpg"%fileprefix)
-        with open("%s_keypoints.json"%fileprefix) as fin:
-            res = json.load(fin)
-        people = res['people']
         self.people = []
+        with open("%s_keypoints.json"%fileprefix) as fin:
+            try:
+                res = json.load(fin)
+            except:
+                return
+        people = res['people']
         for p in people:
             pobj = {}
             for s in ('pose_keypoints_2d', 'hand_left_keypoints_2d', 'hand_right_keypoints_2d', 'face_keypoints_2d'):
@@ -278,15 +285,11 @@ class Pose(object):
                 x = np.reshape(k, (int(len(k)/3), 3))
                 pobj[s] = x
             self.people.append(pobj)
-        #YYYY-MM-DD HH:MM:SS.mmmm
-        s = fileprefix.split("/")[-1]
-        fields = tuple(s.split("-"))
-        self.timestamp = getTime("%s-%s-%s %s:%s:%s:%s"%fields)
     
     def render(self, showLandmarks = True, blurFace = True, blurlast = []):
         I = np.array(self.I)
         xblurs = []
-
+        
         mpl.style.use('default')
         colors = cycle(['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'])
         for p, color in zip(self.people, colors):
@@ -337,112 +340,198 @@ class Pose(object):
         return xblurs
 
 
-def updateAssociations(video, npreceding=30):
-    """
-    Given a sequence of pose objects, make sure the first skeleton is 
-    more similar with the first skeleton in some preceding number of frames
-    than other skeletons are to the first skeleton (swap if not the case)
-    Parameters
-    ----------
-    videos: array (Pose)
-        An array of sequential pose objects in a video
-    npreceding: int
-        The number of preceding frames to consider
-    
-    """
-    N = min(npreceding, len(video)-1)
-    minDists = np.inf
-    minIdx = 0
-    for i in range(len(video[-1].people)):
-        distsi = 0.0
-        x = video[-1].people[i]['pose_keypoints_2d']
-        for j in range(N):
-            y = video[-2-j].people[0]['pose_keypoints_2d']
-            idx = (np.sum(x, 1) > 0)*(np.sum(y, 1) > 0)
-            dists = np.sqrt(np.sum((x[idx, :] - y[idx, :])**2, 1))
-            distsi += np.mean(dists)
-        if distsi < minDists:
-            minDists = distsi
-            minIdx = i
-    if minIdx > 0:
-        p = video[-1].people[0]
-        video[-1].people[0] = video[-1].people[minIdx]
-        video[-1].people[minIdx] = p
 
+class PoseVideo(object):
+    def __init__(self, studydir, save_skeletons = False, delete_frames = True, blurFace = False, framerange = (0, np.inf)):
+        """
+        Given the path to the annotations/XML folder, 
+        figure out the path to video frames and load in the video
 
-
-
-
-
-def getVideo(studydir, save_skeletons = False, blurFace = False, framerange = (0, np.inf)):
-    """
-    Given the path to the annotations/XML folder, 
-    figure out the path to video frames and load in the video
-
-    Parameters
-    ----------
-    studydir: string
-        Path to the directory of the study for this video
-    save_skeletons: boolean, default False
-        Whether to save video of keypoints/skeletons
-    blurFace: boolean, default False
-        If saving keypoints/skeletons, whether to blur the face
-    framerange: tuple, default (0, inf)
-        Range of frames to load in the video.  If not specified, all
-        frames are loaded
-    """
-    study = studydir.split("/")[-1]
-    folder = ""
-    for root, dirs, files in os.walk("AutismVideos"):
-        if len(folder) > 0:
-            break
-        for d in dirs:
+        Parameters
+        ----------
+        studydir: string
+            Path to the directory of the study for this video
+        save_skeletons: boolean, default False
+            Whether to save video of keypoints/skeletons
+        delete_frames: boolean, default True
+            If saving skeleton, whether to delete the individual frames and
+            make a video
+        blurFace: boolean, default False
+            If saving keypoints/skeletons, whether to blur the face
+        framerange: tuple, default (0, inf)
+            Range of frames to load in the video.  If not specified, all
+            frames are loaded
+        """
+        study = studydir.split("/")[-1]
+        folder = ""
+        for root, dirs, files in os.walk("AutismVideos"):
             if len(folder) > 0:
                 break
-            if study in d:
-                folder = "%s/%s"%(root, d)
-                print("Loading video from folder %s"%folder)
-    if len(folder) == "":
-        print("Error: No video folder found for %s"%studydir)
-        return None
-    skeletondir = ""
-    blurlast = []
-    blurlastlast = []
-    if save_skeletons:
-        skeletondir = "%s/Skeletons"%folder
-        if not os.path.exists(skeletondir):
-            os.mkdir(skeletondir)
-    video = []
-    allprefixes = []
-    for root, dirs, files in os.walk(folder):
-        for f in files:
-            if f[-3::] == "jpg":
-                fileprefix = "%s/%s"%(root, f[0:-4])
-                allprefixes.append(fileprefix)
-    allprefixes = sorted(allprefixes)
-    for i, fileprefix in enumerate(allprefixes):
-        if i < framerange[0] or i > framerange[1]:
-            continue
-        print("Loading video frame %i of %i"%(i+1, len(allprefixes)))
-        video.append(Pose(fileprefix))
-        updateAssociations(video)
+            for d in dirs:
+                if len(folder) > 0:
+                    break
+                if study in d:
+                    folder = "%s/%s"%(root, d)
+                    print("Loading video from folder %s"%folder)
+        if len(folder) == "":
+            print("Error: No video folder found for %s"%studydir)
+            return None
+        skeletondir = ""
+        blurlast = []
+        blurlastlast = []
         if save_skeletons:
-            plt.clf()
-            if blurFace:
-                blurlastlast = blurlast
-                blurlast = video[-1].render(blurFace=True, blurlast=blurlast+blurlastlast)
-            else:
-                video[-1].render(blurFace=False)
-            plt.savefig("%s/%s.png"%(skeletondir, fileprefix.split("/")[-1]))
-    return video
+            skeletondir = "%s/Skeletons"%folder
+            if not os.path.exists(skeletondir):
+                os.mkdir(skeletondir)
+        self.frames = []
+        allprefixes = []
+        for root, dirs, files in os.walk(folder):
+            for f in files:
+                if f[-3::] == "jpg":
+                    fileprefix = "%s/%s"%(root, f[0:-4])
+                    allprefixes.append(fileprefix)
+        allprefixes = sorted(allprefixes)
+        N = 0
+        for i, fileprefix in enumerate(allprefixes):
+            if i < framerange[0] or i > framerange[1]:
+                continue
+            print("Loading video frame %i of %i"%(i+1, len(allprefixes)))
+            self.frames.append(Pose(fileprefix))
+            self.updateAssociations()
+            if save_skeletons:
+                plt.clf()
+                if blurFace:
+                    blurlastlast = blurlast
+                    blurlast = self.frames[-1].render(blurFace=True, blurlast=blurlast+blurlastlast)
+                else:
+                    self.frames[-1].render(blurFace=False)
+                #plt.savefig("%s/%s.png"%(skeletondir, fileprefix.split("/")[-1]))
+                plt.savefig("%s/%i.png"%(skeletondir, i-framerange[0]))
+            N += 1
+        print("Loaded %i frames total"%N)
+        if save_skeletons and delete_frames:
+            # Save video
+            subprocess.call(["ffmpeg", "-r", "5", "-i", "%s/%s.png"%(skeletondir, "%d"), "-r", "5", "-b", "5000k", "%s/skeleton.avi"%skeletondir])
+            for i in range(N):
+                os.remove("%s/%i.png"%(skeletondir, i))
 
-def getNearestVideoFrame(video, timestamp):
-    ts = np.array([f.timestamp for f in video])
-    idx = np.argmin(np.abs(ts-timestamp))
-    return video[idx]
+    def updateAssociations(self, npreceding=30):
+        """
+        Given a sequence of pose objects, make sure the first skeleton is 
+        more similar with the first skeleton in some preceding number of frames
+        than other skeletons are to the first skeleton (swap if not the case)
+        Parameters
+        ----------
+        npreceding: int
+            The number of preceding frames to consider
+        
+        """
+        N = min(npreceding, len(self.frames)-1)
+        minDists = np.inf
+        minIdx = 0
+        for i in range(len(self.frames[-1].people)):
+            distsi = 0.0
+            if len(self.frames[-1].people) < 2:
+                continue
+            x = self.frames[-1].people[i]['pose_keypoints_2d']
+            for j in range(N):
+                if len(self.frames[-2-j].people) == 0:
+                    continue
+                y = self.frames[-2-j].people[0]['pose_keypoints_2d']
+                idx = (np.sum(x, 1) > 0)*(np.sum(y, 1) > 0)
+                dists = np.sqrt(np.sum((x[idx, :] - y[idx, :])**2, 1))
+                distsi += np.mean(dists)
+            if distsi < minDists:
+                minDists = distsi
+                minIdx = i
+        if minIdx > 0:
+            p = self.frames[-1].people[0]
+            self.frames[-1].people[0] = self.frames[-1].people[minIdx]
+            self.frames[-1].people[minIdx] = p
+
+    def getKeypointStack(self, kstr):
+        """
+        For this video with N frames and K keypoints of a certain type, 
+        return an Nx2K array with all keypoint coordinates stacked up
+        for the first skeleton
+        Parameters
+        ----------
+        kstr: string
+            String of the type of keypoints
+        
+        Returns
+        -------
+        X: ndarray(N, 2K)
+            An array of all keypoint coordinates
+        M: ndarray(N, 2K)
+            A binary mask indicating where them coordinates were detected
+        """
+        N = len(self.frames)
+        K = self.frames[-1].people[0][kstr].shape[0]
+        X = np.zeros((N, 2*K))
+        M = np.zeros_like(X)
+        for i in range(N):
+            x = self.frames[i].people[0][kstr]
+            xy = x[:, 0:2]
+            mask = np.zeros_like(xy)
+            mask[x[:, 2] > 0, :] = 1
+            X[i, :] = xy.flatten()
+            M[i, :] = mask.flatten()
+        return X, M
+
+    def interpolateMissingKeypoints(self):
+        """
+        Linearly interpolate missing keypoints on the first skeleton
+        """
+        N = len(self.frames)
+        idxs = np.arange(N)
+        for kstr in ['pose_keypoints_2d', 'hand_left_keypoints_2d', 'hand_right_keypoints_2d']:
+            K = self.frames[-1].people[0][kstr].shape[0]
+            X, M = self.getKeypointStack(kstr)
+            # Make the NaN regions some average constant value for plotting contrast
+            X[M == 0] = np.mean(X) 
+            for k in range(X.shape[1]):
+                idxs1 = idxs[M[:, k] == 0]
+                idxs2 = idxs[M[:, k] == 1]
+                if len(idxs1) > 0 and len(idxs2) > 0:
+                    res = np.interp(idxs1, idxs2, X[idxs2, k])
+                    X[M[:, k] == 0, k] = res
+            for i in range(N):
+                x = np.reshape(X[i, :], (K, 2))
+                self.frames[i].people[0][kstr][:, 0:2] = x
 
 
-if __name__ == '__main__2':
+
+    def getNearestFrame(self, timestamp):
+        """
+        Return the video frame that's closest in time to a given timestamp
+        Parameters
+        ----------
+        video: array(Pose)
+            The video sequence
+        timestamp: float
+            The time
+        
+        Returns
+        -------
+        frame: Pose
+            The nearest video frame in time
+        """
+        ts = np.array([f.timestamp for f in self.frames])
+        idx = np.argmin(np.abs(ts-timestamp))
+        return self.frames[idx]
+
+
+########################################################################
+##                Code for testing the loaded data                    ##
+########################################################################
+
+
+
+def testAccelerometerTDA():
+    """
+    Look at an example of using sliding window + TDA on 3-axis accelerometer data
+    """
     NA = len(ACCEL_TYPES)
     studyname = "URI-001-01-18-08"
     foldername = "neudata/data/Study1/URI-001-01-18-08"
@@ -523,6 +612,82 @@ if __name__ == '__main__2':
         plt.tight_layout()
         plt.savefig("%i.svg"%i, bbox_inches='tight')
 
+def makeAllSkeletonVideos():
+    folders = glob.glob("AutismVideos/Study1/*/*")
+    for i, f in enumerate(folders):
+        print("Doing %i of %i"%(i+1, len(folders)))
+        PoseVideo(f, save_skeletons=True)
+
+def testVideoSkeletonTDA():
+    """
+    Look at an example of using sliding window + TDA on keypoints from OpenPose
+    """
+    winlen = 10
+    Tau = 0.1
+    dT = 0.1
+    dim = int(winlen/Tau)
+    keypt_types = ['pose_keypoints_2d','hand_left_keypoints_2d','hand_right_keypoints_2d']
+
+    video = PoseVideo("URI-001-01-18-08", save_skeletons=False, delete_frames=False, framerange = (1000, 1200))
+    video.interpolateMissingKeypoints()
+    colors = cycle(['C0', 'C1', 'C2'])
+    resol = 5
+    plt.figure(figsize=(resol*5, resol*3))
+    for i, v in enumerate(video.frames[0:-winlen]):
+        p = v.people[0]
+        plt.clf()
+        I = np.array(v.I)
+
+        ## Step 1: Plot detected keypoints
+        plt.subplot2grid((3, 5), (0, 0), rowspan=2, colspan=2)
+        plt.imshow(I)
+        for k, (kstr, color) in enumerate(zip(keypt_types, colors)):
+            keypts = p[kstr]
+            # Plot detected keypoints as dots
+            toplot = keypts[keypts[:, 2] > 0, :]
+            plt.scatter(toplot[:, 0], toplot[:, 1], 4, color)
+            # Plot interpolated keypoints as xs
+            toplot = keypts[keypts[:, 2] == 0, :]
+            plt.scatter(toplot[:, 0], toplot[:, 1], 8, color, marker="x")
+        plt.axis('off')
+        plt.xlim([0, I.shape[1]])
+        plt.ylim([I.shape[0], 0])
+
+        # Step 2: Plot sliding windows, SSMs, and H1
+        for k, kstr in enumerate(keypt_types):
+            title = kstr.split("_keypoints")[0]
+            X, M = video.getKeypointStack(kstr)
+            X = X[1::, :] - X[0:-1, :]
+            Y = getSlidingWindowVideo(X[i:i+winlen*2], dim, Tau, dT)
+            Y -= np.mean(Y, 0)[None, :]
+            YNorm = np.sqrt(np.sum(Y**2, 1))
+            YNorm[YNorm == 0] = 1
+            Y /= YNorm[:, None]
+            D = getCSM(Y, Y)
+            dgm = ripser(D, maxdim=1, distance_matrix=True, coeff=41)['dgms'][1]
+
+            plt.subplot(3, 5, k+3)
+            plt.imshow(X, aspect='auto', cmap='magma_r', interpolation='none')
+            plt.plot([0, X.shape[1]], [i, i], c='g')
+            plt.plot([0, X.shape[1]], [i+winlen, i+winlen], c='g')
+            plt.title("%s Coords"%title)
+
+            plt.subplot(3, 5, 5+k+3)
+            plt.imshow(D, interpolation='none')
+            plt.title("%s SSM"%title)
+
+            plt.subplot(3, 5, 10+k+3)
+            mp = 0.0
+            if dgm.size > 0:
+                plot_dgms(diagrams=[dgm], labels=['H1'], size=50, xy_range = [0, 2, 0, 2], show=False)
+                mp = np.max(dgm[:, 1] - dgm[:, 0])
+            plt.xlim([0, 2])
+            plt.ylim([0, 2])
+            plt.title("%s Max Pers = %.3g"%(title, mp))
+
+        plt.savefig("%i.png"%i, bbox_inches='tight')
+
+
 if __name__ == '__main__':
-    # 640
-    video = getVideo("URI-001-01-18-08", save_skeletons = True, blurFace = False, framerange = (600, 1500))
+    testVideoSkeletonTDA()
+    #makeAllSkeletonVideos()
