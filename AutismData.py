@@ -19,10 +19,10 @@ from VideoTools import *
 from ripser import Rips, plot_dgms
 from GeometricScoring import *
 from scipy.spatial import ConvexHull
-import dlib
-
 
 IMPROVE_WITH_DLIB = False
+if IMPROVE_WITH_DLIB:
+    import dlib
 
 ACCEL_TYPES = ["Trunk", "Left-wrist", "Right-wrist"]
 ACCEL_NUMS = ["01", "08", "11"]
@@ -689,5 +689,6 @@ def testVideoSkeletonTDA():
 
 
 if __name__ == '__main__':
-    testVideoSkeletonTDA()
+    testAccelerometerTDA()
+    #testVideoSkeletonTDA()
     #makeAllSkeletonVideos()

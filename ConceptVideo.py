@@ -39,7 +39,7 @@ def makeConceptVideo(annoidx = 0, showPDs = False):
         plt.clf()
         scores = np.zeros(NA)
         dT = (a['stop'] - a['start'])
-        frame = video.getNearestVideoFrame(a['stop'])
+        frame = video.getNearestFrame(a['stop'])
         plt.subplot2grid(gridsize, (0, 0), rowspan=3, colspan=1)
         blurlastlast = blurlast
         blurlast = frame.render(showLandmarks=False, blurlast=blurlast+blurlastlast)
