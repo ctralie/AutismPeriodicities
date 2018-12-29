@@ -13,6 +13,7 @@ import os
 import sys
 import glob
 import datetime
+import calendar
 from lxml import etree as ET
 from mpl_toolkits.mplot3d import Axes3D
 from VideoTools import *
@@ -37,10 +38,12 @@ ACCEL_NUMS = ["01", "08", "11"]
 
 def getTime(s):
     """
-    Convert time from YYYY-MM-DD HH:MM:SS.mmmm into unix millisecond time
+    Convert time from YYYY-MM-DD HH:MM:SS.mmm into unix millisecond time
     """
-    t = time.mktime(datetime.datetime.strptime(s[0:-4], "%Y-%m-%d %H:%M:%S").timetuple())
-    t = t*1000 + float(s[-3:]) + 1*3600000  #Hack: Somehow the data is ahead by 5 hours
+    # Extract milliseconds first
+    spre, smilli = s.split(".")
+    t = calendar.timegm(datetime.datetime.strptime(spre, "%Y-%m-%d %H:%M:%S").timetuple())
+    t = t*1000 + float(smilli)
     return t
 
 def loadAnnotations(filename):
@@ -269,7 +272,7 @@ class Pose(object):
         #YYYY-MM-DD HH:MM:SS.mmmm
         s = fileprefix.split("/")[-1]
         fields = tuple(s.split("-"))
-        self.timestamp = getTime("%s-%s-%s %s:%s:%s:%s"%fields)
+        self.timestamp = getTime("%s-%s-%s %s:%s:%s.%s"%fields)
         self.I = scipy.misc.imread("%s.jpg"%fileprefix)
         self.people = []
         with open("%s_keypoints.json"%fileprefix) as fin:
@@ -689,6 +692,6 @@ def testVideoSkeletonTDA():
 
 
 if __name__ == '__main__':
-    testAccelerometerTDA()
-    #testVideoSkeletonTDA()
+    #testAccelerometerTDA()
+    testVideoSkeletonTDA()
     #makeAllSkeletonVideos()

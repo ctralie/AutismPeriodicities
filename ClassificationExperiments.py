@@ -40,9 +40,6 @@ def doClassificationTests(studiesDir = "neudata/data/Study1/", seed=100):
         print("There are %i annotations and %i negative annotations"%(len(anno), len(nanno)))
         anno = anno + nanno
         ftemplate = foldername + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
-        plt.clf()
-        visualizeLabels(anno, doLegend = True)
-        plt.savefig("%s/annotations.svg"%foldername, bbox_inches='tight')
         Xs = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(len(ACCEL_TYPES))]
         
         
