@@ -272,6 +272,7 @@ class Pose(object):
         #YYYY-MM-DD HH:MM:SS.mmmm
         s = fileprefix.split("/")[-1]
         fields = tuple(s.split("-"))
+        # Put timestamp into the same format as annotations
         self.timestamp = getTime("%s-%s-%s %s:%s:%s.%s"%fields)
         self.I = scipy.misc.imread("%s.jpg"%fileprefix)
         self.people = []
@@ -550,7 +551,6 @@ def testAccelerometerTDA():
     idx = np.argsort([a['start'] for a in allanno])
     allanno = [allanno[i] for i in idx]
     X = np.array([[a['start']-allanno[0]['start'], a['stop']-allanno[0]['start']] for a in allanno])
-    sio.savemat("Intervals.mat", {"X":X})
 
     anno = expandAnnotations(allanno, time = 3000)
     print("There are %i annotations"%len(anno))
@@ -603,9 +603,6 @@ def testAccelerometerTDA():
             else:
                 plt.title("Max = %.3g"%P)
 
-            if i == 8 and k == 0:
-                sio.savemat("D.mat", {"D":D, "DTDA":DTDA, "dT":dT})
-
             #Step 3: Plot SSM
             """
             plt.subplot(NA, 4, k*4+4)
@@ -630,19 +627,26 @@ def testVideoSkeletonTDA():
     dT = 0.1
     dim = int(winlen/Tau)
     keypt_types = ['pose_keypoints_2d','hand_left_keypoints_2d','hand_right_keypoints_2d']
-
-    video = PoseVideo("URI-001-01-18-08", save_skeletons=False, delete_frames=False, framerange = (1000, 1200))
+    
+    studyname = "URI-001-01-18-08"
+    video = PoseVideo(studyname, save_skeletons=False, delete_frames=False, framerange = (1000, 1200))
     video.interpolateMissingKeypoints()
+
+    NA = len(ACCEL_TYPES)
+    ftemplate = "neudata/data/Study1/%s"%studyname + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
+    XsAccel = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(NA)]
+    idxs = np.arange(XsAccel[0].shape[0])
+
     colors = cycle(['C0', 'C1', 'C2'])
     resol = 5
-    plt.figure(figsize=(resol*5, resol*3))
-    for i, v in enumerate(video.frames[0:-winlen]):
+    plt.figure(figsize=(resol*5, resol*4))
+    for i, v in enumerate(video.frames[0:-2*winlen]):
         p = v.people[0]
         plt.clf()
         I = np.array(v.I)
 
         ## Step 1: Plot detected keypoints
-        plt.subplot2grid((3, 5), (0, 0), rowspan=2, colspan=2)
+        plt.subplot2grid((4, 5), (0, 0), rowspan=2, colspan=2)
         plt.imshow(I)
         for k, (kstr, color) in enumerate(zip(keypt_types, colors)):
             keypts = p[kstr]
@@ -656,8 +660,9 @@ def testVideoSkeletonTDA():
         plt.xlim([0, I.shape[1]])
         plt.ylim([I.shape[0], 0])
 
-        # Step 2: Plot sliding windows, SSMs, and H1
+        # Step 2: Plot SSMs and H1 for Video, then accelerometer data, then accelerometer SSMs
         for k, kstr in enumerate(keypt_types):
+            ## Plot video statistics
             title = kstr.split("_keypoints")[0]
             X, M = video.getKeypointStack(kstr)
             X = X[1::, :] - X[0:-1, :]
@@ -668,18 +673,13 @@ def testVideoSkeletonTDA():
             Y /= YNorm[:, None]
             D = getCSM(Y, Y)
             dgm = ripser(D, maxdim=1, distance_matrix=True, coeff=41)['dgms'][1]
-
-            plt.subplot(3, 5, k+3)
-            plt.imshow(X, aspect='auto', cmap='magma_r', interpolation='none')
-            plt.plot([0, X.shape[1]], [i, i], c='g')
-            plt.plot([0, X.shape[1]], [i+winlen, i+winlen], c='g')
-            plt.title("%s Coords"%title)
-
-            plt.subplot(3, 5, 5+k+3)
-            plt.imshow(D, interpolation='none')
+            
+            TExtent = (video.frames[i+winlen].timestamp - v.timestamp)/1000.0
+            plt.subplot(4, 5, k+3)
+            plt.imshow(D, interpolation='none', extent = (0, TExtent, TExtent, 0))
             plt.title("%s SSM"%title)
 
-            plt.subplot(3, 5, 10+k+3)
+            plt.subplot(4, 5, 5+k+3)
             mp = 0.0
             if dgm.size > 0:
                 plot_dgms(diagrams=[dgm], labels=['H1'], size=50, xy_range = [0, 2, 0, 2], show=False)
@@ -687,6 +687,28 @@ def testVideoSkeletonTDA():
             plt.xlim([0, 2])
             plt.ylim([0, 2])
             plt.title("%s Max Pers = %.3g"%(title, mp))
+
+            ## Plot accelerometer statistics
+            i1 = idxs[np.argmin(np.abs(XsAccel[k][:, 0] - v.timestamp))]
+            i2 = idxs[np.argmin(np.abs(XsAccel[k][:, 0] - video.frames[i+2*winlen].timestamp))]
+            x = XsAccel[k][i1:i2, 1::]
+            ts = np.array(XsAccel[k][i1:i2, 0])
+            ts -= ts[0]
+            ts /= 1000.0
+            plt.subplot(4, 5, 10+k+3)
+            plt.plot(ts, x)
+            plt.title(ACCEL_TYPES[k])
+
+            # Estimate window length
+            adim = int(x.shape[0]/2)
+            Y = getSlidingWindowVideoInteger(x, adim)
+            Y -= np.mean(Y, 0)[None, :]
+            YNorm = np.sqrt(np.sum(Y**2, 1))
+            YNorm[YNorm == 0] = 1
+            Y /= YNorm[:, None]
+            D = getCSM(Y, Y)
+            plt.subplot(4, 5, 15+k+3)
+            plt.imshow(D, interpolation='none', extent = (0, TExtent, TExtent, 0))
 
         plt.savefig("%i.png"%i, bbox_inches='tight')
 
