@@ -17,7 +17,7 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
     """
     np.random.seed(seed)
     keypt_types = ['pose_keypoints_2d','hand_left_keypoints_2d','hand_right_keypoints_2d']
-    wintime = 2500
+    blocktime = 2500
 
     # Accelerometer sliding window parameters
     dim = 30
@@ -42,8 +42,8 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
         annofilename = "Annotator1Stereotypy.annotation.xml"
         anno = loadAnnotations("%s/%s"%(foldername, annofilename))
         nanno = getNormalAnnotations(anno[1::])
-        anno = expandAnnotations(anno[1::], time=wintime)
-        nanno = expandAnnotations(nanno, time=wintime)
+        anno = expandAnnotations(anno[1::], time=blocktime)
+        nanno = expandAnnotations(nanno, time=blocktime)
         #Keep the annotations balanced by subsampling the negative regions
         if len(nanno) > len(anno) / 3:
             print("Subsampling %i negative annotations"%len(nanno))
@@ -90,16 +90,22 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
                 X = XVk[i1:i2, :]
 
                 # Compute max persistence
-                Y = getSlidingWindowVideoInteger(X, winlen*fac)
-                Y -= np.mean(Y, 0)[None, :]
-                YNorm = np.sqrt(np.sum(Y**2, 1))
-                YNorm[YNorm == 0] = 1
-                Y /= YNorm[:, None]
-                D = getCSM(Y, Y)
-                dgm = ripser(D, maxdim=1, distance_matrix=True, coeff=41)['dgms'][1]
                 maxpers = 0.0
-                if dgm.size > 0:
-                    maxpers = np.max(dgm[:, 1]-dgm[:, 0])
+                if X.shape[0] > winlen*fac:
+                    if k == 0:
+                        print("%i frames"%X.shape[0])
+                    # If the video isn't skipping too much
+                    Y = getSlidingWindowVideoInteger(X, winlen*fac)
+                    Y -= np.mean(Y, 0)[None, :]
+                    YNorm = np.sqrt(np.sum(Y**2, 1))
+                    YNorm[YNorm == 0] = 1
+                    Y /= YNorm[:, None]
+                    D = getCSM(Y, Y)
+                    dgm = ripser(D, maxdim=1, distance_matrix=True, coeff=41)['dgms'][1]
+                    if dgm.size > 0:
+                        maxpers = np.max(dgm[:, 1]-dgm[:, 0])
+                else:
+                    print("X.shape[0] = %i is too small for window length %i"%(X.shape[0], winlen*fac))
                 features["Video_%s_TDA"%kstr] = maxpers
 
                 # Compute RQA features

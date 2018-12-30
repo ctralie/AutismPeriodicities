@@ -532,10 +532,10 @@ class PoseVideo(object):
         return self.frames[idx]
 
 
-def upsampleFeatureStack(XParam, M, ts, fac = 10, use_spline = True):
+def upsampleFeatureStack(XParam, M, ts, fac = 10, use_spline = True, uniform=False):
     """
-    Use spline interpolation to upsample a stack of features,
-    filling in missing values along the way
+    Use spline interpolation to upsample a stack of features onto
+    a uniform grid, filling in missing values along the way
     Parameters
     ----------
     XParam: ndarray(N, K)
@@ -546,6 +546,10 @@ def upsampleFeatureStack(XParam, M, ts, fac = 10, use_spline = True):
         An array of timestamps
     use_spline: boolean
         If true, use spline interpolation
+    uniform: boolean
+        If true, uniformly resample time indices, not necessarily coinciding
+        with original times.  If not, keep original times and piecewise 
+        linearly interpolate new time samples between them
 
     Returns
     -------
@@ -557,14 +561,18 @@ def upsampleFeatureStack(XParam, M, ts, fac = 10, use_spline = True):
     X = np.array(XParam)
 
     # First figure out new time indices
-    tsnew = np.zeros(ts.size*fac)
-    tsnew[0::fac] = ts
-    idxs = np.zeros_like(tsnew)
-    idxs[0::fac] = 1
-    idxs1 = np.arange(tsnew.size)[idxs == 1]
-    idxs2 = np.arange(tsnew.size)[idxs == 0]
-    tsnew[idxs2] = np.interp(idxs2, idxs1, ts)
+    if uniform:
+        tsnew = np.linspace(ts[0], ts[-1], ts.size*fac)
+    else:
+        tsnew = np.zeros(ts.size*fac)
+        tsnew[0::fac] = ts
+        idxs = np.zeros_like(tsnew)
+        idxs[0::fac] = 1
+        idxs1 = np.arange(tsnew.size)[idxs == 1]
+        idxs2 = np.arange(tsnew.size)[idxs == 0]
+        tsnew[idxs2] = np.interp(idxs2, idxs1, ts)
 
+    # Now perform the interpolation
     K = X.shape[1]
     XNew = np.zeros((tsnew.size, K))
     for k in range(K):
@@ -611,14 +619,14 @@ def testVideoSkeletonTDA():
     """
     Look at an example of using sliding window + TDA on keypoints from OpenPose
     """
-    wintime = 2500
+    blocktime = 2500
     fac = 10
     winlen = 5
     keypt_types = ['pose_keypoints_2d','hand_left_keypoints_2d','hand_right_keypoints_2d']
     
     studyname = "URI-001-01-18-08"
     video = PoseVideo(studyname, save_skeletons=False, delete_frames=False, framerange = (1000, 1200))
-
+    
     NA = len(ACCEL_TYPES)
     ftemplate = "neudata/data/Study1/%s"%studyname + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
     XsAccel = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(NA)]
@@ -668,7 +676,7 @@ def testVideoSkeletonTDA():
             tidxs = np.arange(tsk.size)
             title = kstr.split("_keypoints")[0]
             t1 = v.timestamp
-            t2 = t1 + wintime
+            t2 = t1 + blocktime
             i1 = tidxs[np.argmin(np.abs(t1-tsk))]
             i2 = tidxs[np.argmin(np.abs(t2-tsk))]
             X = XVk[i1:i2, :]
