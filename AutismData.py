@@ -480,6 +480,8 @@ class PoseVideo(object):
         M = np.zeros_like(X)
         ts = np.zeros(N)
         for i in range(N):
+            if len(self.frames[i].people) == 0:
+                continue # No skeletons detected in this frame
             x = self.frames[i].people[0][kstr]
             xy = np.array(x[:, 0:2])
             mask = np.zeros_like(xy)
@@ -530,7 +532,7 @@ class PoseVideo(object):
         return self.frames[idx]
 
 
-def upsampleFeatureStack(XParam, M, ts, fac = 10):
+def upsampleFeatureStack(XParam, M, ts, fac = 10, use_spline = True):
     """
     Use spline interpolation to upsample a stack of features,
     filling in missing values along the way
@@ -542,7 +544,9 @@ def upsampleFeatureStack(XParam, M, ts, fac = 10):
         A binary mask indicating which features were actually detected
     ts: ndarray(N)
         An array of timestamps
-    
+    use_spline: boolean
+        If true, use spline interpolation
+
     Returns
     -------
     XNew: ndarray(N*fac, K)
@@ -566,11 +570,18 @@ def upsampleFeatureStack(XParam, M, ts, fac = 10):
     for k in range(K):
         xk = XParam[:, k]
         tk = ts[M[:, k] == 1]
-        if tk.size == 0:
+        if tk.size == 0 or (tk.size <= 3 and use_spline):
             # None of this feature was detected at all, so skip
             continue
         xk = xk[M[:, k] == 1]
-        XNew[:, k] = interp.spline(tk, xk, tsnew)
+        if use_spline:
+            #XNew[:, k] = interp.spline(tk, xk, tsnew)
+            f = interp.interp1d(tk, xk, kind='cubic')
+            idx = np.arange(tsnew.size)
+            idx = idx[(tsnew >= np.min(tk))*(tsnew <= np.max(tk))]
+            XNew[idx, k] = f(tsnew[idx])
+        else:
+            XNew[:, k] = np.interp(tsnew, tk, xk)
     return XNew, tsnew
 
 def getAccelerationFeatureStack(X, sigma):
@@ -600,8 +611,9 @@ def testVideoSkeletonTDA():
     """
     Look at an example of using sliding window + TDA on keypoints from OpenPose
     """
-    winlen = 10
+    wintime = 2500
     fac = 10
+    winlen = 5
     keypt_types = ['pose_keypoints_2d','hand_left_keypoints_2d','hand_right_keypoints_2d']
     
     studyname = "URI-001-01-18-08"
@@ -616,10 +628,12 @@ def testVideoSkeletonTDA():
     XsVideo = []
     tsvideo = []
     for k, kstr in enumerate(keypt_types):
-        ## Plot video statistics
         title = kstr.split("_keypoints")[0]
+        tic = time.time()
+        print("Upsampling %s..."%kstr)
         X, M, ts = video.getKeypointStack(kstr)
         XNew, tsnew = upsampleFeatureStack(X, M, ts, fac)
+        print("Elapsed Time: %.3g"%(time.time()-tic))
         XNew = getAccelerationFeatureStack(XNew, 1)
         XsVideo.append(XNew)
         tsvideo.append(tsnew)
@@ -654,7 +668,7 @@ def testVideoSkeletonTDA():
             tidxs = np.arange(tsk.size)
             title = kstr.split("_keypoints")[0]
             t1 = v.timestamp
-            t2 = video.frames[i+winlen*2].timestamp
+            t2 = t1 + wintime
             i1 = tidxs[np.argmin(np.abs(t1-tsk))]
             i2 = tidxs[np.argmin(np.abs(t2-tsk))]
             X = XVk[i1:i2, :]
@@ -666,7 +680,7 @@ def testVideoSkeletonTDA():
             D = getCSM(Y, Y)
             dgm = ripser(D, maxdim=1, distance_matrix=True, coeff=41)['dgms'][1]
             
-            TExtent = (video.frames[i+winlen].timestamp - v.timestamp)/1000.0
+            TExtent = (tsk[i2-winlen*fac]-t1)/1000.0
             plt.subplot(4, 5, k+3)
             plt.imshow(D, interpolation='none', extent = (0, TExtent, TExtent, 0))
             plt.title("%s SSM"%title)

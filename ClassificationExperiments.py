@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from RQA import *
 from ripser import Rips
 import pandas as pd
+import time
 
 # Dictionary to convert behavioral labels into numbered indices for classification
 LABELS_DICT = {s:i for i, s in enumerate(['Flap-Rock', 'Rock', 'Flap', 'Normal'])}
@@ -15,11 +16,18 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
     Compute all of the features for all time intervals for all subjects in a study
     """
     np.random.seed(seed)
-    # Sliding window parameters
+    keypt_types = ['pose_keypoints_2d','hand_left_keypoints_2d','hand_right_keypoints_2d']
+    wintime = 2500
+
+    # Accelerometer sliding window parameters
     dim = 30
     derivWin = -1
 
-    # RQA Parameters
+    # Video sliding window parameters
+    winlen = 5 #Assuming video is 4-5 fps on average, this is somewhere around 1 second
+    fac = 10 # Interpolation factor
+    
+    # RQA Parameters for both accelerometer and video
     dmin = 5
     vmin = 5
     Kappa = 0.2
@@ -34,8 +42,8 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
         annofilename = "Annotator1Stereotypy.annotation.xml"
         anno = loadAnnotations("%s/%s"%(foldername, annofilename))
         nanno = getNormalAnnotations(anno[1::])
-        anno = expandAnnotations(anno[1::])
-        nanno = expandAnnotations(nanno)
+        anno = expandAnnotations(anno[1::], time=wintime)
+        nanno = expandAnnotations(nanno, time=wintime)
         #Keep the annotations balanced by subsampling the negative regions
         if len(nanno) > len(anno) / 3:
             print("Subsampling %i negative annotations"%len(nanno))
@@ -45,23 +53,61 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
         ftemplate = foldername + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
         XsAccel = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(len(ACCEL_TYPES))]
         
+        video = PoseVideo(foldername.split("/")[-1], save_skeletons=False)
+        XsVideo = []
+        tsvideo = []
+        for k, kstr in enumerate(keypt_types):
+            X, M, ts = video.getKeypointStack(kstr)
+            XNew, tsnew = upsampleFeatureStack(X, M, ts, fac)
+            XNew = getAccelerationFeatureStack(XNew, 1)
+            XsVideo.append(XNew)
+            tsvideo.append(tsnew)
+        
         for i, a in enumerate(anno[1::]):
             print("Doing Annotation %i of %i"%(i, len(anno)))
             if not a['label'] in LABELS_DICT:
                 continue
             features = {'label':[a['label']], 'subject':[j], 'study':[studies[j]]}
 
-            # Step 1: Get statistics for all accelerometers
+            ## Step 1: Get statistics for all accelerometers
             for k in range(len(ACCEL_TYPES)):
                 x = getAccelerometerRange(XsAccel[k], a)[:, 1::]
                 #x = smoothDataMedian(x, 3)
                 res = getPersistencesBlock(x, dim, derivWin = derivWin)
                 B = CSMToBinaryMutual(getCSM(x, x), Kappa)
                 rqas = getRQAStats(B, dmin, vmin)
-                features["%s_TDA"%ACCEL_TYPES[k]] = [res['P']]
+                features["Accel_%s_TDA"%ACCEL_TYPES[k]] = [res['P']]
                 for rqstr in rqas.keys():
-                    features["%s_RQA_%s"%(ACCEL_TYPES[k], rqstr)] = [rqas[rqstr]]
+                    features["Accel_%s_RQA_%s"%(ACCEL_TYPES[k], rqstr)] = [rqas[rqstr]]
             
+            ## Step 2: Get statistics for video keypoints
+            for k, (kstr, tsk, XVk) in enumerate(zip(keypt_types, tsvideo, XsVideo)):
+                # Extract keypoints within time interval of this annotation
+                tidxs = np.arange(tsk.size)
+                title = kstr.split("_keypoints")[0]
+                i1 = tidxs[np.argmin(np.abs(a['start']-tsk))]
+                i2 = tidxs[np.argmin(np.abs(a['stop']-tsk))]
+                X = XVk[i1:i2, :]
+
+                # Compute max persistence
+                Y = getSlidingWindowVideoInteger(X, winlen*fac)
+                Y -= np.mean(Y, 0)[None, :]
+                YNorm = np.sqrt(np.sum(Y**2, 1))
+                YNorm[YNorm == 0] = 1
+                Y /= YNorm[:, None]
+                D = getCSM(Y, Y)
+                dgm = ripser(D, maxdim=1, distance_matrix=True, coeff=41)['dgms'][1]
+                maxpers = 0.0
+                if dgm.size > 0:
+                    maxpers = np.max(dgm[:, 1]-dgm[:, 0])
+                features["Video_%s_TDA"%kstr] = maxpers
+
+                # Compute RQA features
+                B = CSMToBinaryMutual(getCSM(X, X), Kappa)
+                for rqstr in rqas.keys():
+                    features["Video_%s_RQA_%s"%(kstr, rqstr)] = [rqas[rqstr]]
+
+            ## Step 3: Append features to dictionary
             AllFeatures = AllFeatures.append(pd.DataFrame.from_dict(features))
         fout = open(csvname, "w")
         AllFeatures.to_csv(fout)
@@ -89,4 +135,4 @@ def doClassificationStudy(csvname):
     pass
 
 if __name__ == '__main__':
-    getAllFeaturesStudy("neudata/data/Study1/", "study1.csv")
+    getAllFeaturesStudy("neudata/data/Study1/", "study1_all.csv")
