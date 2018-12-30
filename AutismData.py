@@ -20,6 +20,8 @@ from VideoTools import *
 from ripser import Rips, plot_dgms
 from GeometricScoring import *
 from scipy.spatial import ConvexHull
+import scipy.interpolate as interp
+from scipy.ndimage.filters import gaussian_filter1d as gf1d
 
 IMPROVE_WITH_DLIB = False
 if IMPROVE_WITH_DLIB:
@@ -195,7 +197,7 @@ def getAccelerometerRange(X, a):
 
 
 ########################################################################
-##           Class for dealing with OpenPose and video data           ##
+##          Classes for dealing with OpenPose and video data          ##
 ########################################################################
 
 def getConvexMask(hull, Y, shape):
@@ -468,20 +470,24 @@ class PoseVideo(object):
         X: ndarray(N, 2K)
             An array of all keypoint coordinates
         M: ndarray(N, 2K)
-            A binary mask indicating where them coordinates were detected
+            A binary mask indicating which coordinates were actually detected
+        ts: ndarray(N)
+            An array of timestamps
         """
         N = len(self.frames)
         K = self.frames[-1].people[0][kstr].shape[0]
         X = np.zeros((N, 2*K))
         M = np.zeros_like(X)
+        ts = np.zeros(N)
         for i in range(N):
             x = self.frames[i].people[0][kstr]
-            xy = x[:, 0:2]
+            xy = np.array(x[:, 0:2])
             mask = np.zeros_like(xy)
             mask[x[:, 2] > 0, :] = 1
             X[i, :] = xy.flatten()
             M[i, :] = mask.flatten()
-        return X, M
+            ts[i] = self.frames[i].timestamp
+        return X, M, ts
 
     def interpolateMissingKeypoints(self):
         """
@@ -491,20 +497,18 @@ class PoseVideo(object):
         idxs = np.arange(N)
         for kstr in ['pose_keypoints_2d', 'hand_left_keypoints_2d', 'hand_right_keypoints_2d']:
             K = self.frames[-1].people[0][kstr].shape[0]
-            X, M = self.getKeypointStack(kstr)
+            X, M, ts = self.getKeypointStack(kstr)
             # Make the NaN regions some average constant value for plotting contrast
             X[M == 0] = np.mean(X) 
             for k in range(X.shape[1]):
-                idxs1 = idxs[M[:, k] == 0]
-                idxs2 = idxs[M[:, k] == 1]
-                if len(idxs1) > 0 and len(idxs2) > 0:
-                    res = np.interp(idxs1, idxs2, X[idxs2, k])
+                ts1 = ts[M[:, k] == 0]
+                ts2 = ts[M[:, k] == 1]
+                if len(ts1) > 0 and len(ts2) > 0:
+                    res = np.interp(ts1, ts2, X[idxs[M[:, k] == 1], k])
                     X[M[:, k] == 0, k] = res
             for i in range(N):
                 x = np.reshape(X[i, :], (K, 2))
                 self.frames[i].people[0][kstr][:, 0:2] = x
-
-
 
     def getNearestFrame(self, timestamp):
         """
@@ -526,91 +530,65 @@ class PoseVideo(object):
         return self.frames[idx]
 
 
+def upsampleFeatureStack(XParam, M, ts, fac = 10):
+    """
+    Use spline interpolation to upsample a stack of features,
+    filling in missing values along the way
+    Parameters
+    ----------
+    XParam: ndarray(N, K)
+        An array of all features
+    M: ndarray(N, K)
+        A binary mask indicating which features were actually detected
+    ts: ndarray(N)
+        An array of timestamps
+    
+    Returns
+    -------
+    XNew: ndarray(N*fac, K)
+        An array of interpolated features
+    tsnew: ndarray(N*fac)
+        Interpolated times
+    """
+    X = np.array(XParam)
+
+    # First figure out new time indices
+    tsnew = np.zeros(ts.size*fac)
+    tsnew[0::fac] = ts
+    idxs = np.zeros_like(tsnew)
+    idxs[0::fac] = 1
+    idxs1 = np.arange(tsnew.size)[idxs == 1]
+    idxs2 = np.arange(tsnew.size)[idxs == 0]
+    tsnew[idxs2] = np.interp(idxs2, idxs1, ts)
+
+    K = X.shape[1]
+    XNew = np.zeros((tsnew.size, K))
+    for k in range(K):
+        xk = XParam[:, k]
+        tk = ts[M[:, k] == 1]
+        if tk.size == 0:
+            # None of this feature was detected at all, so skip
+            continue
+        xk = xk[M[:, k] == 1]
+        XNew[:, k] = interp.spline(tk, xk, tsnew)
+    return XNew, tsnew
+
+def getAccelerationFeatureStack(X, sigma):
+    """
+    Compute an extimate of acceleration of each component
+    of a feature stack using convolution with a Gaussian derivative
+    Parameters
+    ----------
+    X: ndarray(N, K)
+        An array of features
+    sigma: int
+        Width of the gaussian by which to convolve
+    """
+    return gf1d(X, sigma, axis=0, order=2, mode = 'nearest')
+
 ########################################################################
 ##                Code for testing the loaded data                    ##
 ########################################################################
-
-
-
-def testAccelerometerTDA():
-    """
-    Look at an example of using sliding window + TDA on 3-axis accelerometer data
-    """
-    NA = len(ACCEL_TYPES)
-    studyname = "URI-001-01-18-08"
-    foldername = "neudata/data/Study1/URI-001-01-18-08"
-    annofilename = "Annotator1Stereotypy.annotation.xml"
-    anno = loadAnnotations("%s/%s"%(foldername, annofilename))
-    ftemplate = foldername + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
-    anno = anno[1::]
-    #anno = anno + getNormalAnnotations(anno)
-    #nanno = getNormalAnnotations(anno)
-    #allanno = anno[2::] + nanno
-    allanno = anno[3::]
-
-    idx = np.argsort([a['start'] for a in allanno])
-    allanno = [allanno[i] for i in idx]
-    X = np.array([[a['start']-allanno[0]['start'], a['stop']-allanno[0]['start']] for a in allanno])
-
-    anno = expandAnnotations(allanno, time = 3000)
-    print("There are %i annotations"%len(anno))
-
-    Xs = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(NA)]
-
-    dim = 30
-    derivWin = -1
-
-    fac = 0.5
-    plt.figure(figsize=(fac*15, fac*5*NA))
-    FigH = 10*NA+1
-    rips = Rips()
-    for i in range(1, len(anno)):
-        plt.clf()
-        a = anno[i]
-        print(a)
-        dT = (a['stop'] - a['start'])/1000.0
-        for k in range(NA):
-            print(ACCEL_TYPES[k])
-            x = getAccelerometerRange(Xs[k], a)[:, 1::]
-            #x = smoothDataMedian(x, 5)
-
-            plt.subplot(NA, 3, k*3+1)
-            plt.plot(np.linspace(0, dT, len(x)), x)
-            plt.xlabel("Time (Sec)")
-            plt.ylabel("Accelerometer Reading")
-            plt.legend(["X", "Y", "Z"])
-            #plt.title(a['label'])
-            plt.title("Accelerometer %s"%ACCEL_TYPES[k])
-
-            #Step 1: Plot ordinary SSM
-            plt.subplot(NA, 3, k*3+2)
-            
-            D = getCSM(x, x)
-            plt.imshow(D, cmap = 'afmhot', interpolation = 'nearest', extent = (0, dT, 0, dT))
-            plt.title("SSM %s"%ACCEL_TYPES[k])
-            plt.xlabel("Time (Sec)")
-            plt.ylabel("Time (Sec)")
-
-            #Step 2: Plot persistence diagram
-            plt.subplot(NA, 3, k*3+3)
-            res = getPersistencesBlock(x, dim, derivWin = derivWin, birthcutoff=np.inf)
-            [I, P, DTDA] = [res['I'], res['P'], res['D']]
-            if I.size > 0:
-                rips.plot(diagrams=[I], labels=['H1'], size=50, show=False, \
-                            xy_range = [0, 2, 0, 2])
-            if k == 0:
-                plt.title("Sliding Window \nPersistence Diagram\nMax = %.3g"%P)
-            else:
-                plt.title("Max = %.3g"%P)
-
-            #Step 3: Plot SSM
-            """
-            plt.subplot(NA, 4, k*4+4)
-            plt.imshow(DTDA, cmap = 'afmhot', interpolation = 'nearest')
-            """
-
-        plt.tight_layout()
-        plt.savefig("%i.svg"%i, bbox_inches='tight')
 
 def makeAllSkeletonVideos():
     folders = glob.glob("AutismVideos/Study1/*/*")
@@ -623,19 +601,28 @@ def testVideoSkeletonTDA():
     Look at an example of using sliding window + TDA on keypoints from OpenPose
     """
     winlen = 10
-    Tau = 0.1
-    dT = 0.1
-    dim = int(winlen/Tau)
+    fac = 10
     keypt_types = ['pose_keypoints_2d','hand_left_keypoints_2d','hand_right_keypoints_2d']
     
     studyname = "URI-001-01-18-08"
     video = PoseVideo(studyname, save_skeletons=False, delete_frames=False, framerange = (1000, 1200))
-    video.interpolateMissingKeypoints()
 
     NA = len(ACCEL_TYPES)
     ftemplate = "neudata/data/Study1/%s"%studyname + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
     XsAccel = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(NA)]
     idxs = np.arange(XsAccel[0].shape[0])
+
+    ## Step 0: Upsample and interpolate keypoints
+    XsVideo = []
+    tsvideo = []
+    for k, kstr in enumerate(keypt_types):
+        ## Plot video statistics
+        title = kstr.split("_keypoints")[0]
+        X, M, ts = video.getKeypointStack(kstr)
+        XNew, tsnew = upsampleFeatureStack(X, M, ts, fac)
+        XNew = getAccelerationFeatureStack(XNew, 1)
+        XsVideo.append(XNew)
+        tsvideo.append(tsnew)
 
     colors = cycle(['C0', 'C1', 'C2'])
     resol = 5
@@ -660,13 +647,18 @@ def testVideoSkeletonTDA():
         plt.xlim([0, I.shape[1]])
         plt.ylim([I.shape[0], 0])
 
-        # Step 2: Plot SSMs and H1 for Video, then accelerometer data, then accelerometer SSMs
-        for k, kstr in enumerate(keypt_types):
+        # Step 2: For each region (left/right hand and trunk), plot SSMs and H1 for video, 
+        # then accelerometer data, then accelerometer SSMs
+        for k, (kstr, tsk, XVk) in enumerate(zip(keypt_types, tsvideo, XsVideo)):
             ## Plot video statistics
+            tidxs = np.arange(tsk.size)
             title = kstr.split("_keypoints")[0]
-            X, M = video.getKeypointStack(kstr)
-            X = X[1::, :] - X[0:-1, :]
-            Y = getSlidingWindowVideo(X[i:i+winlen*2], dim, Tau, dT)
+            t1 = v.timestamp
+            t2 = video.frames[i+winlen*2].timestamp
+            i1 = tidxs[np.argmin(np.abs(t1-tsk))]
+            i2 = tidxs[np.argmin(np.abs(t2-tsk))]
+            X = XVk[i1:i2, :]
+            Y = getSlidingWindowVideoInteger(X, winlen*fac)
             Y -= np.mean(Y, 0)[None, :]
             YNorm = np.sqrt(np.sum(Y**2, 1))
             YNorm[YNorm == 0] = 1
@@ -689,8 +681,8 @@ def testVideoSkeletonTDA():
             plt.title("%s Max Pers = %.3g"%(title, mp))
 
             ## Plot accelerometer statistics
-            i1 = idxs[np.argmin(np.abs(XsAccel[k][:, 0] - v.timestamp))]
-            i2 = idxs[np.argmin(np.abs(XsAccel[k][:, 0] - video.frames[i+2*winlen].timestamp))]
+            i1 = idxs[np.argmin(np.abs(XsAccel[k][:, 0] - t1))]
+            i2 = idxs[np.argmin(np.abs(XsAccel[k][:, 0] - t2))]
             x = XsAccel[k][i1:i2, 1::]
             ts = np.array(XsAccel[k][i1:i2, 0])
             ts -= ts[0]
@@ -714,6 +706,5 @@ def testVideoSkeletonTDA():
 
 
 if __name__ == '__main__':
-    #testAccelerometerTDA()
-    testVideoSkeletonTDA()
     #makeAllSkeletonVideos()
+    testVideoSkeletonTDA()
