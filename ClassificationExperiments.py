@@ -84,7 +84,6 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
             for k, (kstr, tsk, XVk) in enumerate(zip(keypt_types, tsvideo, XsVideo)):
                 # Extract keypoints within time interval of this annotation
                 tidxs = np.arange(tsk.size)
-                title = kstr.split("_keypoints")[0]
                 i1 = tidxs[np.argmin(np.abs(a['start']-tsk))]
                 i2 = tidxs[np.argmin(np.abs(a['stop']-tsk))]
                 X = XVk[i1:i2, :]

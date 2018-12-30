@@ -459,7 +459,7 @@ class PoseVideo(object):
         """
         For this video with N frames and K keypoints of a certain type, 
         return an Nx2K array with all keypoint coordinates stacked up
-        for the first skeleton
+        for the first skeleton.
         Parameters
         ----------
         kstr: string
@@ -475,11 +475,16 @@ class PoseVideo(object):
             An array of timestamps
         """
         N = len(self.frames)
-        K = self.frames[-1].people[0][kstr].shape[0]
+        K = 0
+        for f in self.frames:
+            if len(f.people) > 0:
+                K = f.people[0][kstr].shape[0]
+                break
         X = np.zeros((N, 2*K))
         M = np.zeros_like(X)
         ts = np.zeros(N)
         for i in range(N):
+            ts[i] = self.frames[i].timestamp
             if len(self.frames[i].people) == 0:
                 continue # No skeletons detected in this frame
             x = self.frames[i].people[0][kstr]
@@ -488,7 +493,6 @@ class PoseVideo(object):
             mask[x[:, 2] > 0, :] = 1
             X[i, :] = xy.flatten()
             M[i, :] = mask.flatten()
-            ts[i] = self.frames[i].timestamp
         return X, M, ts
 
     def interpolateMissingKeypoints(self):
@@ -626,7 +630,7 @@ def testVideoSkeletonTDA():
     
     studyname = "URI-001-01-18-08"
     video = PoseVideo(studyname, save_skeletons=False, delete_frames=False, framerange = (1000, 1200))
-    
+
     NA = len(ACCEL_TYPES)
     ftemplate = "neudata/data/Study1/%s"%studyname + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"
     XsAccel = [loadAccelerometerData(ftemplate%(ACCEL_NUMS[i], ACCEL_TYPES[i])) for i in range(NA)]
