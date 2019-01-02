@@ -265,9 +265,15 @@ class Pose(object):
     POSE_HAND = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],\
                 [0, 9], [9, 10], [10, 11], [11, 12], [0, 13], [13, 14], [14, 15],\
                 [15, 16], [0, 17], [17, 18], [18, 19], [19, 20]]
-    def __init__(self, fileprefix):
+    def __init__(self, fileprefix, loadframe = True):
         """
         Load open pose keypoints and image, and initialize timestamp
+        Parameters
+        ----------
+        fileprefix: string
+            Path to folder with video folders in it
+        loadframe: boolean (default True)
+            If true, load image frame and keypoints.  If false, just load keypoints
         """
         self.fileprefix = fileprefix
         print(fileprefix)
@@ -276,7 +282,13 @@ class Pose(object):
         fields = tuple(s.split("-"))
         # Put timestamp into the same format as annotations
         self.timestamp = getTime("%s-%s-%s %s:%s:%s.%s"%fields)
-        self.I = scipy.misc.imread("%s.jpg"%fileprefix)
+        if loadframe:
+            try:
+                self.I = scipy.misc.imread("%s.jpg"%fileprefix)
+            except:
+                self.I = np.zeros((640, 480, 3))
+        else:
+            self.I = np.zeros((640, 480, 3))
         self.people = []
         with open("%s_keypoints.json"%fileprefix) as fin:
             try:
@@ -348,7 +360,7 @@ class Pose(object):
 
 
 class PoseVideo(object):
-    def __init__(self, studydir, save_skeletons = False, delete_frames = True, blurFace = False, framerange = (0, np.inf)):
+    def __init__(self, studydir, save_skeletons = False, delete_frames = True, blurFace = False, loadframes = True, framerange = (0, np.inf)):
         """
         Given the path to the annotations/XML folder, 
         figure out the path to video frames and load in the video
@@ -364,6 +376,8 @@ class PoseVideo(object):
             make a video
         blurFace: boolean, default False
             If saving keypoints/skeletons, whether to blur the face
+        loadframes: boolean, default True
+            Whether or not to load video frames
         framerange: tuple, default (0, inf)
             Range of frames to load in the video.  If not specified, all
             frames are loaded
@@ -402,7 +416,7 @@ class PoseVideo(object):
             if i < framerange[0] or i > framerange[1]:
                 continue
             print("Loading video frame %i of %i"%(i+1, len(allprefixes)))
-            self.frames.append(Pose(fileprefix))
+            self.frames.append(Pose(fileprefix, loadframe=loadframes))
             self.updateAssociations()
             if save_skeletons:
                 plt.clf()

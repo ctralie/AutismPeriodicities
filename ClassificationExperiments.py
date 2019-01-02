@@ -118,7 +118,9 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
         AllFeatures.to_csv(fout)
         fout.close()
 
-            
+def doAccelKeypointsCorrelations(csvname):
+    pass
+
 def doClassificationStudy(csvname):
     """
     Perform a bunch of cross-validated classification experiments with
