@@ -123,7 +123,7 @@ def visualizeLabels(anno, thisa = None, relative = True, doLegend = True):
         if relative:
             t1 = (t1-minTime)/1000.0
             t2 = (t2-minTime)/1000.0
-        h = plt.plot([t1, t2], [0, 0], colors[labels[l]], linewidth=1, label = l)[0]
+        h = plt.plot([t1, t2], [0, 1], colors[labels[l]], linewidth=1, label = l)[0]
         legends[l] = h
         idx += 1
     if thisa:
@@ -637,7 +637,7 @@ def testVideoSkeletonTDA():
     """
     Look at an example of using sliding window + TDA on keypoints from OpenPose
     """
-    blocktime = 2500
+    blocktime = 2000
     fac = 10
     winlen = 5
     keypt_types = ['pose_keypoints_2d','hand_left_keypoints_2d','hand_right_keypoints_2d']
@@ -698,13 +698,8 @@ def testVideoSkeletonTDA():
             i1 = tidxs[np.argmin(np.abs(t1-tsk))]
             i2 = tidxs[np.argmin(np.abs(t2-tsk))]
             X = XVk[i1:i2, :]
-            Y = getSlidingWindowVideoInteger(X, winlen*fac)
-            Y -= np.mean(Y, 0)[None, :]
-            YNorm = np.sqrt(np.sum(Y**2, 1))
-            YNorm[YNorm == 0] = 1
-            Y /= YNorm[:, None]
-            D = getCSM(Y, Y)
-            dgm = ripser(D, maxdim=1, distance_matrix=True, coeff=41)['dgms'][1]
+            res = getPersistencesBlock(X, winlen*fac, mean_center=False, sphere_normalize=True)
+            D, dgm = res['D'], res['I']
             
             TExtent = (tsk[i2-winlen*fac]-t1)/1000.0
             plt.subplot(4, 5, k+3)
@@ -733,12 +728,7 @@ def testVideoSkeletonTDA():
 
             # Estimate window length
             adim = int(x.shape[0]/2)
-            Y = getSlidingWindowVideoInteger(x, adim)
-            Y -= np.mean(Y, 0)[None, :]
-            YNorm = np.sqrt(np.sum(Y**2, 1))
-            YNorm[YNorm == 0] = 1
-            Y /= YNorm[:, None]
-            D = getCSM(Y, Y)
+            D = getPersistencesBlock(x, adim, mean_center=True, sphere_normalize=True)['D']
             plt.subplot(4, 5, 15+k+3)
             plt.imshow(D, interpolation='none', extent = (0, TExtent, TExtent, 0))
 

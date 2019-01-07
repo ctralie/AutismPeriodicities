@@ -274,7 +274,24 @@ def getPCAVideo(I):
     V = V*np.sqrt(lam[None, :])
     return V
 
-def getSlidingWindowVideo(I, dim, Tau, dT):
+def getSlidingWindowVideo(I, dim, Tau, dT, point_center=False):
+    """
+    Stack up the frames of a multidimensional time series into
+    a sliding 
+    Parameters
+    ----------
+    I: ndarray(NFrames, NPixels)
+        An array of flattened video frames, each along a row
+    dim: int
+        Dimension of sliding window embedding
+    Tau: float
+        Lag between adjacent frames in a window
+    dT: float
+        Lag between adjacent windows
+    point_center: boolean
+        Whether to subtract the mean of all frames in a window
+        from each frame in that window
+    """
     N = I.shape[0] #Number of frames
     P = I.shape[1] #Number of pixels (possibly after PCA)
     pix = np.arange(P)
@@ -286,7 +303,10 @@ def getSlidingWindowVideo(I, dim, Tau, dT):
         start = int(np.floor(idxx[0]))
         end = int(np.ceil(idxx[-1]))
         f = scipy.interpolate.interp2d(pix, idx[start:end+1], I[idx[start:end+1], :], kind='linear')
-        X[i, :] = f(pix, idxx).flatten()
+        Window = f(pix, idxx)
+        if point_center:
+            Window -= np.median(Window, 0)[None, :]
+        X[i, :] = Window.flatten()
     return X
 
 def getSlidingWindowVideoInteger(I, dim):

@@ -61,35 +61,23 @@ def doRipsFiltrationDMGUDHI(D, maxHomDim, coeff = 2, doPlot = False):
         Is[i] = np.array(Is[i])
     return Is
 
-def getSlidingWindow(XP, dim, derivWin = -1, Tau = 1, dT = 1):
-    """
-    Return a sliding window video
-    :param XP: An N x d matrix of N frames each with d pixels
-    :param dim: The dimension of the sliding window
-    :param derivWin: Whether or not to do a time derivative of each pixel
-    :returns: XS: The sliding window video
-    """
-    X = np.array(XP)
-    #Do time derivative
-    if derivWin > -1:
-        X = getTimeDerivative(X, derivWin)[0]
+def sphereNormalize(Y):
+    YNorm = np.sqrt(np.sum(Y**2, 1))
+    YNorm[YNorm == 0] = 1
+    return Y/YNorm[:, None]
 
-    #Get sliding window
-    if X.shape[0] <= dim:
-        return np.array([[0, 0]])
-    XS = getSlidingWindowVideo(X, dim, Tau, dT)
-
-    #Mean-center and normalize sliding window
-    #XS = XS - np.mean(XS, 1)[:, None] #Point Centering
-    XS = XS - np.mean(XS, 0)[None, :] #Z Normalizing
-    XS = XS/np.sqrt(np.sum(XS**2, 1))[:, None]
-    return XS
-
-def getPersistencesBlock(XP, dim, estimateFreq = False, derivWin = -1, cosineDist = False, birthcutoff = 0.7):
+def getPersistencesBlock(XP, dim, cosineDist = False, birthcutoff = np.inf, mean_center=False, sphere_normalize=True):
     """
     Return the Sw1Pers score of this block
     """
-    XS = getSlidingWindow(XP, dim, derivWin)
+    if XP.shape[0] <= dim:
+        # Not enough samples for chosen sliding window length
+        return {'D':np.array([]), 'I':np.array([[0, 0]]), 'P':0}
+    XS = getSlidingWindowVideoInteger(XP, dim)
+    if mean_center:
+        XS -= np.mean(XS, 0)[None, :]
+    if sphere_normalize:
+        XS = sphereNormalize(XS)
     #XS = getMeanShift(XS)
     if cosineDist:
         D = XS.dot(XS.T)
@@ -107,10 +95,3 @@ def getPersistencesBlock(XP, dim, estimateFreq = False, derivWin = -1, cosineDis
         if ISub.size > 0:
             Pers = np.max(ISub[:, 1] - ISub[:, 0])
     return {'D':D, 'P':Pers, 'I':I}
-
-def getD2ChiSqr(XP, dim, estimateFreq = False, derivWin = -1):
-    """
-    Return the Chi squared distance to the perfect circle distribution
-    """
-    XS = getSlidingWindow(XP, dim, estimateFreq, derivWin)
-    ##TODO

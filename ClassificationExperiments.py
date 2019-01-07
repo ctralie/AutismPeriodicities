@@ -16,6 +16,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.metrics import confusion_matrix
 from sklearn import svm
+from sklearn import tree
 
 # Dictionary to convert behavioral labels into numbered indices for classification
 LABELS = ['Flap-Rock', 'Rock', 'Flap', 'Normal']
@@ -26,7 +27,7 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
     Compute all of the features for all time intervals for all subjects in a study
     """
     np.random.seed(seed)
-    blocktime = 2000
+    blocktime = 2500
 
     # Accelerometer sliding window parameters
     dim = 30
@@ -82,7 +83,7 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
             for k in range(len(ACCEL_TYPES)):
                 x = getAccelerometerRange(XsAccel[k], a)[:, 1::]
                 #x = smoothDataMedian(x, 3)
-                res = getPersistencesBlock(x, dim, derivWin = derivWin)
+                res = getPersistencesBlock(x, dim, mean_center=False, sphere_normalize=True, birthcutoff=np.inf)
                 B = CSMToBinaryMutual(getCSM(x, x), Kappa)
                 rqas = getRQAStats(B, dmin, vmin)
                 features["Accel_%s_TDA"%ACCEL_TYPES[k]] = [res['P']]
@@ -95,29 +96,16 @@ def getAllFeaturesStudy(studiesdir, csvname, seed=100):
                 tidxs = np.arange(tsk.size)
                 i1 = tidxs[np.argmin(np.abs(a['start']-tsk))]
                 i2 = tidxs[np.argmin(np.abs(a['stop']-tsk))]
-                X = XVk[i1:i2, :]
-
+                x = XVk[i1:i2, :]
                 # Compute max persistence
-                maxpers = 0.0
-                if X.shape[0] > winlen*fac:
-                    if k == 0:
-                        print("%i frames"%X.shape[0])
-                    # If the video isn't skipping too much
-                    Y = getSlidingWindowVideoInteger(X, winlen*fac)
-                    Y -= np.mean(Y, 0)[None, :]
-                    YNorm = np.sqrt(np.sum(Y**2, 1))
-                    YNorm[YNorm == 0] = 1
-                    Y /= YNorm[:, None]
-                    D = getCSM(Y, Y)
-                    dgm = ripser(D, maxdim=1, distance_matrix=True, coeff=41)['dgms'][1]
-                    if dgm.size > 0:
-                        maxpers = np.max(dgm[:, 1]-dgm[:, 0])
-                else:
-                    print("X.shape[0] = %i is too small for window length %i"%(X.shape[0], winlen*fac))
-                features["Video_%s_TDA"%kstr] = maxpers
+                if k == 0:
+                    print("%i frames"%x.shape[0])
+                # If the video isn't skipping too much
+                res = getPersistencesBlock(x, winlen*fac, mean_center=True, sphere_normalize=True, birthcutoff=np.inf)
+                features["Video_%s_TDA"%kstr] = [res['P']]
 
                 # Compute RQA features
-                B = CSMToBinaryMutual(getCSM(X, X), Kappa)
+                B = CSMToBinaryMutual(getCSM(x, x), Kappa)
                 for rqstr in rqas.keys():
                     features["Video_%s_RQA_%s"%(kstr, rqstr)] = [rqas[rqstr]]
 
@@ -233,7 +221,8 @@ def doClassificationStudy(csvname, periodic = False, seed = 0, n_splits=4):
     for (clfmethod, clfstr) in [(LogisticRegression(random_state=0, solver='lbfgs', multi_class='multinomial'), "LogisticRegression"), \
                                 (KNeighborsClassifier(n_neighbors=5), 'KNN5'), \
                                 #(svm.SVC(gamma='scale'), 'SVM_RBF'), \
-                                (RandomForestClassifier(n_estimators=100, max_depth=2, random_state=0), 'RandomForest')]:
+                                #(RandomForestClassifier(n_estimators=100, max_depth=2, random_state=0), 'RandomForest'), \
+                                (tree.DecisionTreeClassifier(), "DecisionTree")]:
         print(clfstr)
         plt.figure(figsize=(res*4, res*3))
         for i, accelvideo in enumerate(["Accel", "Video", ""]):
@@ -288,7 +277,7 @@ def doClassificationStudy(csvname, periodic = False, seed = 0, n_splits=4):
             plt.savefig("%s_%s.svg"%(csvname, clfstr), bbox_inches='tight')
 
 if __name__ == '__main__':
-    #getAllFeaturesStudy("neudata/data/Study1/", "study1_all_blocktime2000.csv")
+    getAllFeaturesStudy("neudata/data/Study1/", "study1_all.csv")
     #doAccelKeypointsCorrelations("study1_all.csv")
     for periodic in [False, True]:
         doClassificationStudy("study1_all.csv", periodic=periodic, seed=10, n_splits=4)
