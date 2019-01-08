@@ -610,6 +610,17 @@ def upsampleFeatureStack(XParam, M, ts, fac = 10, use_spline = True, uniform=Fal
             XNew[:, k] = np.interp(tsnew, tk, xk)
     return XNew, tsnew
 
+def getCentroidStack(X):
+    N = X.shape[0]
+    K = int(X.shape[1]/2)
+    XRet = np.zeros((N, 2))
+    for i in range(N):
+        x = X[i, :]
+        x = np.reshape(x, (K, 2))
+        x = np.mean(x, 0)
+        XRet[i, :] = x
+    return XRet
+
 def getAccelerationFeatureStack(X, sigma):
     """
     Compute an extimate of acceleration of each component
@@ -628,8 +639,10 @@ def getAccelerationFeatureStack(X, sigma):
 ########################################################################
 
 def makeAllSkeletonVideos():
-    folders = glob.glob("AutismVideos/Study1/*/*")
+    folders = glob.glob("AutismVideos/Study2/*/*")
     for i, f in enumerate(folders):
+        if i < 4:
+            continue
         print("Doing %i of %i"%(i+1, len(folders)))
         PoseVideo(f, save_skeletons=True)
 
@@ -643,7 +656,7 @@ def testVideoSkeletonTDA():
     keypt_types = ['pose_keypoints_2d','hand_left_keypoints_2d','hand_right_keypoints_2d']
     
     studyname = "URI-001-01-18-08"
-    video = PoseVideo(studyname, save_skeletons=False, delete_frames=False, framerange = (1000, 1200))
+    video = PoseVideo(studyname, save_skeletons=False, delete_frames=False, framerange = (1000, np.inf))
 
     NA = len(ACCEL_TYPES)
     ftemplate = "neudata/data/Study1/%s"%studyname + "/MITes_%s_RawCorrectedData_%s.RAW_DATA.csv"

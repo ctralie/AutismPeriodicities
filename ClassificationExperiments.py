@@ -2,6 +2,7 @@ from AutismData import *
 from GeometricScoring import *
 import glob
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from RQA import *
 from ripser import Rips
 import pandas as pd
@@ -137,6 +138,33 @@ def doAccelKeypointsCorrelations(csvname):
             ax.text(j, i, "%.3g"%D[i, j], va='center', ha='center')
     plt.xticks(np.arange(3), videos)
     plt.yticks(np.arange(3), accels)
+    plt.show()
+
+def scatterTDAScores(csvname):
+    accels = ["Accel_%s_TDA"%s for s in ["Trunk", "Left-wrist", "Right-wrist"]]
+    videos = ["Video_%s_TDA"%s for s in ['pose_keypoints_2d','hand_left_keypoints_2d','hand_right_keypoints_2d']]
+    data = pd.read_csv(csvname)
+    X1 = data[accels].values
+    X2 = data[videos].values
+    labels_str = data['label'].values
+    label2index = {}
+    index2label = {}
+    for label in labels_str:
+        if not label in label2index:
+            label2index[label] = len(label2index)
+            index2label[len(index2label)] = label
+    labels = np.array([label2index[label] for label in labels_str])
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    idx = np.random.permutation(labels.size)[0:1000]
+    X = X2[idx, :]
+    labels = labels[idx]
+    for i in range(len(index2label)):
+        ax.scatter(X[labels==i, 0], X[labels==i, 1], X[labels==i, 2])
+    plt.legend([index2label[i] for i in range(len(index2label))])
+    ax.set_xlabel("Pose")
+    ax.set_ylabel("Left Hand")
+    ax.set_zlabel("Right Hand")
     plt.show()
 
 def plot_confusion_matrix(cm, classes,
@@ -277,7 +305,9 @@ def doClassificationStudy(csvname, periodic = False, seed = 0, n_splits=4):
             plt.savefig("%s_%s.svg"%(csvname, clfstr), bbox_inches='tight')
 
 if __name__ == '__main__':
-    getAllFeaturesStudy("neudata/data/Study1/", "study1_all.csv")
-    #doAccelKeypointsCorrelations("study1_all.csv")
+    #getAllFeaturesStudy("neudata/data/Study1/", "study1_all_centroid.csv")
     for periodic in [False, True]:
-        doClassificationStudy("study1_all.csv", periodic=periodic, seed=10, n_splits=4)
+        doClassificationStudy("study1_all_centroid.csv", periodic=periodic, seed=10, n_splits=4)
+
+    #scatterTDAScores("study1_all.csv")
+    #doAccelKeypointsCorrelations("study1_all_centroid.csv")
