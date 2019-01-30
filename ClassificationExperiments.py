@@ -304,10 +304,127 @@ def doClassificationStudy(csvname, periodic = False, seed = 0, n_splits=4):
         else:
             plt.savefig("%s_%s.svg"%(csvname, clfstr), bbox_inches='tight')
 
+
+
+def evenlySubsampleByClass(y, samples_per_class):
+    classes = np.unique(y)
+    idxs = np.array([])
+    for c in classes:
+        idxc = np.arange(len(y))[y == c]
+        idxs = np.concatenate((idxs, np.random.permutation(idxc)[0:samples_per_class]))
+    idxs = np.array(idxs, dtype=int)
+    return idxs
+
+def doClassificationStudyBySubject(csvname, periodic = False, seed = 0, samples_per_class=200):
+    """
+    Perform a bunch of cross-validated classification experiments with
+    the features and labels, leaving one subject out and balancing the rest
+    Parameters
+    ----------
+    cvsname: string
+        Path to the comma separated value file with all of the features
+        and labels in it
+    periodic: boolean
+        If true, do a classification between periodic and not periodic only
+        If false, do a classification between all 4 classes
+    seed: int
+        Seed for evenmly subasmpmling
+    samples_per_class: int
+        The number of samples for each class for traning.  Total training samples is then
+        4x this number
+    """
+    data = pd.read_csv(csvname)
+    ystrs = data['label'].values
+    label2idx = {s:i for i, s in enumerate(LABELS)}
+    print(label2idx)
+    yall = []
+    yperiodic = []
+    for ystr in ystrs:
+        yall.append(label2idx[ystr])
+        if ystr == 'Normal':
+            yperiodic.append(0)
+        else:
+            yperiodic.append(1)
+    yall = np.array(yall)
+    yperiodic = np.array(yperiodic)
+    subject = (data[['subject']].values).flatten()
+    NSubjects = len(np.unique(subject))
+
+
+    ## Step 2: Perform classification experiments
+    res = 4
+    for (clfmethod, clfstr) in [(LogisticRegression(random_state=0, solver='lbfgs', multi_class='multinomial'), "LogisticRegression"), \
+                                (KNeighborsClassifier(n_neighbors=5), 'KNN5'), \
+                                #(svm.SVC(gamma='scale'), 'SVM_RBF'), \
+                                #(RandomForestClassifier(n_estimators=100, max_depth=2, random_state=0), 'RandomForest'), \
+                                (tree.DecisionTreeClassifier(), "DecisionTree")]:
+        print(clfstr)
+        plt.figure(figsize=(res*4, res*3))
+        for subj in range(NSubjects):
+            plt.clf()
+            test_index = np.arange(yall.size)[yall == subj]
+            idxother = np.arange(yall.size)[(yall==subj)==0]
+            idxresample = evenlySubsampleByClass(yall[idxother], samples_per_class)
+            train_index = idxother[idxresample]
+            counts = np.zeros(4)
+            print(np.unique(yall[train_index]))
+            for c in np.unique(yall[train_index]):
+                counts[c] = np.sum(yall[train_index] == c)
+            print(counts)
+            return
+            for i, accelvideo in enumerate(["Accel", "Video", ""]):
+                for j, rqatda in enumerate(["RQA", "TDA", "Lmax", ""]):
+                    keys = [d for d in data.keys() if (accelvideo in d and rqatda in d)]
+                    keys = [k for k in keys if ("Accel" in k or "Video" in k)]
+                    avname = accelvideo
+                    rqaname = rqatda
+                    if len(accelvideo) == 0:
+                        avname = "Both"
+                    if len(rqatda) == 0:
+                        rqaname = "Both"
+                    testname = "%s_%s"%(avname, rqaname)
+                    X = np.array(data[keys].values, dtype=float)
+                    ConfAll = np.zeros((len(LABELS), len(LABELS)))
+                    ConfPeriodic = np.zeros((2, 2))
+
+                    clf = make_pipeline(StandardScaler(), clfmethod)
+                    X_train, X_test = X[train_index, :], X[test_index, :]
+                    Total = X_test.shape[0]
+                    if periodic:
+                        yperiodic_train, yperiodic_test = yperiodic[train_index], yperiodic[test_index]
+                        clf.fit(X_train, yperiodic_train)
+                        y_pred = clf.predict(X_test)
+                        CorrectPeriodic = np.sum(yperiodic_test == y_pred)
+                        ConfPeriodic = confusion_matrix(yperiodic_test, y_pred)
+                    else:
+                        yall_train, yall_test = yall[train_index], yall[test_index]
+                        clf.fit(X_train, yall_train)
+                        y_pred = clf.predict(X_test)
+                        CorrectAll = np.sum(yall_test == y_pred)
+                        ConfAll = confusion_matrix(yall_test, y_pred)
+                    plt.subplot(3, 4, i*4+j+1)
+                    percentage = 0.0
+                    if periodic:
+                        percentage = 100.0*CorrectPeriodic/Total
+                        plot_confusion_matrix(ConfPeriodic, ['Normal', 'SMM'])
+                    else:
+                        percentage = 100.0*CorrectAll/Total
+                        plot_confusion_matrix(ConfAll, LABELS)
+                    outstr = "%s: %.3g %s"%(testname, percentage, "%")
+                    print(outstr)
+                    plt.title(outstr)
+            plt.tight_layout()
+            if periodic:
+                plt.savefig("%i_Periodic_%s_%s.svg"%(subj, csvname, clfstr), bbox_inches='tight')
+            else:
+                plt.savefig("%i_%s_%s.svg"%(subj, csvname, clfstr), bbox_inches='tight')
+
+
+
 if __name__ == '__main__':
     #getAllFeaturesStudy("neudata/data/Study1/", "study1_all_centroid.csv")
     for periodic in [False, True]:
-        doClassificationStudy("study1_all_centroid.csv", periodic=periodic, seed=10, n_splits=4)
+        doClassificationStudyBySubject("study1_all.csv", periodic=periodic, seed=10, samples_per_class=200)
 
     #scatterTDAScores("study1_all.csv")
     #doAccelKeypointsCorrelations("study1_all_centroid.csv")
