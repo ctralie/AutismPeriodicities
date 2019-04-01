@@ -53,4 +53,4 @@ def makeConceptVideo(annoidx = 0):
         plt.savefig("anno%i_%i.png"%(annoidx, i), bbox_inches='tight')
 
 if __name__ == '__main__':
-    makeConceptVideo(4)
+    makeConceptVideo(0)
