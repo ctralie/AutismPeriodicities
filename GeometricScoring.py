@@ -2,7 +2,6 @@ import numpy as np
 import scipy.io as sio
 from scipy import sparse
 import time
-from ripser import ripser
 from VideoTools import *
 
 def getMeanShift(X, theta = np.pi/16):
@@ -70,6 +69,7 @@ def getPersistencesBlock(XP, dim, cosineDist = False, birthcutoff = np.inf, mean
     """
     Return the Sw1Pers score of this block
     """
+    from ripser import ripser
     if XP.shape[0] <= dim:
         # Not enough samples for chosen sliding window length
         return {'D':np.array([]), 'I':np.array([[0, 0]]), 'P':0}
